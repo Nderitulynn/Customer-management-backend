@@ -9,8 +9,8 @@ const orderSchema = new mongoose.Schema({
     required: true
   },
   
-  // Customer Reference
-  customer: {
+  // Customer Reference - FIXED: Changed from 'customer' to 'customerId'
+  customerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Customer',
     required: [true, 'Customer is required']
@@ -104,9 +104,9 @@ const orderSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes for performance
+// Indexes for performance - FIXED: Updated index from 'customer' to 'customerId'
 orderSchema.index({ orderNumber: 1 });
-orderSchema.index({ customer: 1 });
+orderSchema.index({ customerId: 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ priority: 1 });
 orderSchema.index({ assignedTo: 1 });
@@ -172,17 +172,17 @@ orderSchema.pre('save', function(next) {
   next();
 });
 
-// Post-save middleware to update customer statistics
+// Post-save middleware to update customer statistics - FIXED: Updated field reference
 orderSchema.post('save', async function(doc, next) {
   try {
     const Customer = mongoose.model('Customer');
-    const customer = await Customer.findById(doc.customer);
+    const customer = await Customer.findById(doc.customerId);
     
     if (customer) {
-      // Get all orders for this customer
+      // Get all orders for this customer - FIXED: Updated field reference
       const Order = mongoose.model('Order');
       const customerOrders = await Order.find({ 
-        customer: doc.customer,
+        customerId: doc.customerId,
         status: { $ne: 'cancelled' }
       });
 
@@ -202,7 +202,7 @@ orderSchema.post('save', async function(doc, next) {
       }
 
       // Update customer
-      await Customer.findByIdAndUpdate(doc.customer, {
+      await Customer.findByIdAndUpdate(doc.customerId, {
         totalOrders,
         totalSpent,
         lastOrderDate

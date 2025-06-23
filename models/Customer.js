@@ -65,6 +65,21 @@ const customerSchema = new mongoose.Schema({
     required: true
   },
 
+  // ADDED: Missing fields from routes
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  lastUpdatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  segment: {
+    type: String,
+    enum: ['new', 'regular', 'vip', 'inactive'],
+    default: 'new'
+  },
+
   // Business Metrics
   totalOrders: {
     type: Number,
@@ -101,8 +116,11 @@ const customerSchema = new mongoose.Schema({
 customerSchema.index({ email: 1 });
 customerSchema.index({ phone: 1 });
 customerSchema.index({ status: 1 });
+customerSchema.index({ isActive: 1 });
+customerSchema.index({ segment: 1 });
 customerSchema.index({ assignedTo: 1 });
 customerSchema.index({ createdAt: -1 });
+customerSchema.index({ fullName: 'text' }); // Text index for search
 
 // Virtual for customer age/duration
 customerSchema.virtual('customerAge').get(function() {
@@ -132,5 +150,114 @@ customerSchema.pre('save', function(next) {
 
   next();
 });
+
+// ADDED: Static method for customer statistics
+customerSchema.statics.getStats = async function() {
+  const stats = await this.aggregate([
+    {
+      $group: {
+        _id: null,
+        totalCustomers: { $sum: 1 },
+        activeCustomers: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
+        totalSpent: { $sum: '$totalSpent' },
+        averageSpent: { $avg: '$totalSpent' },
+        totalOrders: { $sum: '$totalOrders' }
+      }
+    }
+  ]);
+
+  const segmentStats = await this.aggregate([
+    { 
+      $group: { 
+        _id: '$segment', 
+        count: { $sum: 1 },
+        totalSpent: { $sum: '$totalSpent' },
+        avgSpent: { $avg: '$totalSpent' }
+      } 
+    }
+  ]);
+
+  const sourceStats = await this.aggregate([
+    { 
+      $group: { 
+        _id: '$source', 
+        count: { $sum: 1 } 
+      } 
+    }
+  ]);
+
+  return {
+    overview: stats[0] || {
+      totalCustomers: 0,
+      activeCustomers: 0,
+      totalSpent: 0,
+      averageSpent: 0,
+      totalOrders: 0
+    },
+    bySegment: segmentStats.reduce((acc, stat) => {
+      acc[stat._id] = { 
+        count: stat.count, 
+        totalSpent: stat.totalSpent || 0,
+        avgSpent: stat.avgSpent || 0
+      };
+      return acc;
+    }, {}),
+    bySource: sourceStats.reduce((acc, stat) => {
+      acc[stat._id] = stat.count;
+      return acc;
+    }, {})
+  };
+};
+
+// ADDED: Static method to get customers by segment
+customerSchema.statics.getBySegment = async function(segment, options = {}) {
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = 'createdAt',
+    sortOrder = 'desc'
+  } = options;
+
+  const query = { segment, isActive: true };
+  const skip = (page - 1) * limit;
+  const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+
+  const customers = await this.find(query)
+    .populate('assignedTo', 'fullName')
+    .populate('createdBy', 'fullName')
+    .sort(sort)
+    .skip(skip)
+    .limit(limit);
+
+  const total = await this.countDocuments(query);
+
+  return {
+    customers,
+    pagination: {
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
+      totalItems: total,
+      hasNext: page < Math.ceil(total / limit),
+      hasPrev: page > 1
+    }
+  };
+};
+
+// Instance method to update segment based on spending/orders
+customerSchema.methods.updateSegment = function() {
+  if (this.totalOrders === 0) {
+    this.segment = 'new';
+  } else if (this.totalSpent >= 10000) { // VIP threshold
+    this.segment = 'vip';
+  } else if (this.totalOrders >= 5) {
+    this.segment = 'regular';
+  } else if (this.lastOrderDate && new Date() - this.lastOrderDate > 90 * 24 * 60 * 60 * 1000) {
+    this.segment = 'inactive'; // No order in 90 days
+  } else {
+    this.segment = 'regular';
+  }
+  
+  return this;
+};
 
 module.exports = mongoose.model('Customer', customerSchema);
