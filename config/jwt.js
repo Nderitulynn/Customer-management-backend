@@ -27,12 +27,13 @@ const jwtStrategy = new JwtStrategy(jwtOptions, async (payload, done) => {
       return done(null, false, { message: 'User account is inactive' });
     }
 
-    // Return user object for req.user
+    // Return user object for req.user - FIXED: Use firstName/lastName
     return done(null, {
       userId: user._id,
       username: user.username,
       email: user.email,
-      fullName: user.fullName,
+      firstName: user.firstName,  // ✅ Fixed: Use actual field names
+      lastName: user.lastName,    // ✅ Fixed: Use actual field names
       role: user.role,
       isActive: user.isActive
     });

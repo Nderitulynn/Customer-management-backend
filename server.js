@@ -6,8 +6,12 @@ const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
 const hpp = require('hpp');
+const passport = require('passport');
 const connectDB = require('./config/database');
 require('dotenv').config();
+
+// Import JWT configuration
+const { jwtStrategy } = require('./config/jwt');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -21,6 +25,12 @@ connectDB();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Configure Passport JWT Strategy
+passport.use(jwtStrategy);
+
+// Initialize Passport
+app.use(passport.initialize());
 
 // Security Middleware
 // Set security headers
@@ -116,6 +126,9 @@ app.use(hpp({
 if (process.env.NODE_ENV === 'development') {
   app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+    if (req.headers.authorization) {
+      console.log('Authorization header present');
+    }
     next();
   });
 }
@@ -138,8 +151,83 @@ app.get('/', (req, res) => {
       auth: '/api/auth',
       customers: '/api/customers (requires authentication)'
     },
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    security: {
+      cors: 'enabled',
+      helmet: 'enabled',
+      rateLimit: 'enabled',
+      jwtAuth: 'configured'
+    }
   });
 });
 
-//
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Global error handler:', err);
+  
+  // CORS errors
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      success: false,
+      message: 'CORS policy violation',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  // JWT errors
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid token',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Token expired',
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  // Default error response
+  res.status(err.status || 500).json({
+    success: false,
+    message: process.env.NODE_ENV === 'production' 
+      ? 'Something went wrong!' 
+      : err.message,
+    timestamp: new Date().toISOString(),
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
+
+// Handle 404 routes
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.originalUrl} not found`,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Shutting down gracefully...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received. Shutting down gracefully...');
+  process.exit(0);
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔒 JWT Authentication: ${process.env.JWT_SECRET ? 'Configured' : 'NOT CONFIGURED!'}`);
+  console.log(`🌐 CORS Origin: ${process.env.CLIENT_URL || 'http://localhost:3000'}`);
+});
+
+module.exports = app;
