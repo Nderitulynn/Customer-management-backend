@@ -1,100 +1,182 @@
 // backend/middleware/auth.js
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const passport = require('passport');
+const { jwtStrategy } = require('../config/jwt');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+// Initialize Passport JWT strategy
+passport.use('jwt', jwtStrategy);
 
-// Authentication middleware
-const auth = async (req, res, next) => {
-  try {
-    // Get token from header
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. No token provided.'
-      });
+// Basic authentication middleware
+const requireAuth = () => {
+  return passport.authenticate('jwt', { session: false });
+};
+
+// Admin role required middleware
+const requireAdmin = () => {
+  return [
+    requireAuth(),
+    (req, res, next) => {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Access denied. User not authenticated.'
+        });
+      }
+
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Admin role required.'
+        });
+      }
+
+      next();
     }
+  ];
+};
 
-    // Verify token
-    const decoded = jwt.verify(token, JWT_SECRET);
-    
-    // Check if user exists and is active
-    const user = await User.findById(decoded.userId).select('-password -refreshToken');
-    
-    if (!user || !user.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. User not found or inactive.'
-      });
+// Assistant role or higher middleware
+const requireAssistant = () => {
+  return [
+    requireAuth(),
+    (req, res, next) => {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Access denied. User not authenticated.'
+        });
+      }
+
+      if (!['admin', 'assistant'].includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Assistant role or higher required.'
+        });
+      }
+
+      next();
     }
+  ];
+};
 
-    // Add user info to request
-    req.user = {
-      userId: user._id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      firstName: user.firstName,
-      lastName: user.lastName
-    };
+// Active user required middleware
+const requireActiveUser = () => {
+  return [
+    requireAuth(),
+    (req, res, next) => {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Access denied. User not authenticated.'
+        });
+      }
 
-    next();
-  } catch (error) {
-    console.error('Auth middleware error:', error.message);
-    
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. Invalid token.'
-      });
+      if (!req.user.isActive) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. User account is inactive.'
+        });
+      }
+
+      next();
     }
-    
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. Token expired.'
-      });
-    }
+  ];
+};
 
-    res.status(500).json({
+// Permission middleware for specific resources
+const checkPermission = (resource, action) => {
+  return [
+    requireAuth(),
+    (req, res, next) => {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Access denied. User not authenticated.'
+        });
+      }
+
+      // Define permission matrix
+      const permissions = {
+        admin: {
+          users: ['create', 'read', 'update', 'delete'],
+          customers: ['create', 'read', 'update', 'delete'],
+          orders: ['create', 'read', 'update', 'delete'],
+          reports: ['read']
+        },
+        assistant: {
+          customers: ['create', 'read', 'update'],
+          orders: ['create', 'read', 'update']
+        }
+      };
+
+      const userPermissions = permissions[req.user.role];
+      if (!userPermissions || !userPermissions[resource] || !userPermissions[resource].includes(action)) {
+        return res.status(403).json({
+          success: false,
+          message: `Access denied. Insufficient permissions for ${action} on ${resource}.`
+        });
+      }
+
+      next();
+    }
+  ];
+};
+
+// Generic role-based access control
+const authorize = (...roles) => {
+  return [
+    requireAuth(),
+    (req, res, next) => {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Access denied. User not authenticated.'
+        });
+      }
+
+      if (!roles.includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          message: `Access denied. Requires ${roles.join(' or ')} role.`
+        });
+      }
+
+      next();
+    }
+  ];
+};
+
+// Error handling middleware for authentication
+const handleAuthError = (err, req, res, next) => {
+  if (err.name === 'AuthenticationError') {
+    return res.status(401).json({
       success: false,
-      message: 'Server error during authentication.'
+      message: 'Authentication failed'
     });
   }
+
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid token'
+    });
+  }
+
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Token expired'
+    });
+  }
+
+  next(err);
 };
-
-// Authorization middleware - check user roles
-const authorize = (...roles) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. User not authenticated.'
-      });
-    }
-
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        message: `Access denied. Requires ${roles.join(' or ')} role.`
-      });
-    }
-
-    next();
-  };
-};
-
-// Admin only middleware
-const adminOnly = authorize('admin');
-
-// Admin or Assistant middleware
-const adminOrAssistant = authorize('admin', 'assistant');
 
 module.exports = {
-  auth,
+  requireAuth,
+  requireAdmin,
+  requireAssistant,
+  requireActiveUser,
+  checkPermission,
   authorize,
-  adminOnly,
-  adminOrAssistant
+  handleAuthError
 };

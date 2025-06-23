@@ -1,25 +1,7 @@
 // backend/controllers/authController.js
 const User = require('../models/User');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const { tokenUtils } = require('../config/jwt');
 const { validationResult } = require('express-validator');
-
-// Helper function to generate JWT tokens
-const generateTokens = (userId) => {
-  const accessToken = jwt.sign(
-    { userId },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
-  );
-
-  const refreshToken = jwt.sign(
-    { userId },
-    process.env.JWT_REFRESH_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
-  );
-
-  return { accessToken, refreshToken };
-};
 
 // Helper function to create success response
 const createSuccessResponse = (message, data = null, token = null) => {
@@ -61,7 +43,7 @@ const register = async (req, res) => {
       );
     }
 
-    const { username, email, password, firstName, lastName, role = 'assistant' } = req.body;
+    const { username, email, password, fullName, role = 'assistant' } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({
@@ -87,15 +69,15 @@ const register = async (req, res) => {
       username,
       email,
       password,
-      firstName,
-      lastName,
+      fullName,
       role
     });
 
     await user.save();
 
     // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const accessToken = tokenUtils.generateToken(user._id, user.role);
+    const refreshToken = tokenUtils.generateRefreshToken();
 
     // Update user with refresh token
     user.refreshToken = refreshToken;
@@ -103,8 +85,6 @@ const register = async (req, res) => {
 
     // Remove sensitive data from response
     const userResponse = user.toJSON();
-    delete userResponse.password;
-    delete userResponse.refreshToken;
 
     res.status(201).json(
       createSuccessResponse(
@@ -169,7 +149,8 @@ const login = async (req, res) => {
     }
 
     // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const accessToken = tokenUtils.generateToken(user._id, user.role);
+    const refreshToken = tokenUtils.generateRefreshToken();
 
     // Update user with refresh token and last login
     user.refreshToken = refreshToken;
@@ -178,8 +159,6 @@ const login = async (req, res) => {
 
     // Remove sensitive data from response
     const userResponse = user.toJSON();
-    delete userResponse.password;
-    delete userResponse.refreshToken;
 
     res.status(200).json(
       createSuccessResponse(
@@ -197,10 +176,10 @@ const login = async (req, res) => {
   }
 };
 
-// @desc    Get user profile
-// @route   GET /api/auth/profile
+// @desc    Get current user profile
+// @route   GET /api/auth/me
 // @access  Private
-const getProfile = async (req, res) => {
+const getCurrentUser = async (req, res) => {
   try {
     const user = await User.findById(req.user.userId);
 
@@ -212,8 +191,6 @@ const getProfile = async (req, res) => {
 
     // Remove sensitive data from response
     const userResponse = user.toJSON();
-    delete userResponse.password;
-    delete userResponse.refreshToken;
 
     res.status(200).json(
       createSuccessResponse(
@@ -223,7 +200,7 @@ const getProfile = async (req, res) => {
     );
 
   } catch (error) {
-    console.error('Get profile error:', error);
+    console.error('Get current user error:', error);
     res.status(500).json(
       createErrorResponse('Internal server error while fetching profile')
     );
@@ -243,7 +220,7 @@ const updateProfile = async (req, res) => {
       );
     }
 
-    const { firstName, lastName, email } = req.body;
+    const { fullName, email } = req.body;
     const userId = req.user.userId;
 
     // Check if email is being changed and if it's already taken
@@ -263,7 +240,7 @@ const updateProfile = async (req, res) => {
     // Update user
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { firstName, lastName, email },
+      { fullName, email },
       { new: true, runValidators: true }
     );
 
@@ -275,8 +252,6 @@ const updateProfile = async (req, res) => {
 
     // Remove sensitive data from response
     const userResponse = updatedUser.toJSON();
-    delete userResponse.password;
-    delete userResponse.refreshToken;
 
     res.status(200).json(
       createSuccessResponse(
@@ -306,7 +281,7 @@ const updateProfile = async (req, res) => {
 };
 
 // @desc    Change password
-// @route   PUT /api/auth/change-password
+// @route   PUT /api/auth/password
 // @access  Private
 const changePassword = async (req, res) => {
   try {
@@ -369,7 +344,7 @@ const refreshToken = async (req, res) => {
     // Verify refresh token
     let decoded;
     try {
-      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+      decoded = tokenUtils.verifyToken(refreshToken);
     } catch (error) {
       return res.status(401).json(
         createErrorResponse('Invalid refresh token')
@@ -378,7 +353,6 @@ const refreshToken = async (req, res) => {
 
     // Find user with matching refresh token
     const user = await User.findOne({
-      _id: decoded.userId,
       refreshToken
     });
 
@@ -389,7 +363,8 @@ const refreshToken = async (req, res) => {
     }
 
     // Generate new tokens
-    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
+    const newAccessToken = tokenUtils.generateToken(user._id, user.role);
+    const newRefreshToken = tokenUtils.generateRefreshToken();
 
     // Update user with new refresh token
     user.refreshToken = newRefreshToken;
@@ -399,7 +374,7 @@ const refreshToken = async (req, res) => {
       createSuccessResponse(
         'Token refreshed successfully',
         null,
-        { accessToken, refreshToken: newRefreshToken }
+        { accessToken: newAccessToken, refreshToken: newRefreshToken }
       )
     );
 
@@ -435,68 +410,12 @@ const logout = async (req, res) => {
   }
 };
 
-// @desc    Get all users (Admin only)
-// @route   GET /api/auth/users
-// @access  Private (Admin)
-const getAllUsers = async (req, res) => {
-  try {
-    const { page = 1, limit = 10, role, search } = req.query;
-    const skip = (page - 1) * limit;
-
-    // Build filter object
-    const filter = {};
-    if (role) filter.role = role;
-    if (search) {
-      filter.$or = [
-        { username: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { firstName: { $regex: search, $options: 'i' } },
-        { lastName: { $regex: search, $options: 'i' } }
-      ];
-    }
-
-    // Get users with pagination
-    const users = await User.find(filter)
-      .select('-password -refreshToken')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    // Get total count for pagination
-    const totalUsers = await User.countDocuments(filter);
-    const totalPages = Math.ceil(totalUsers / limit);
-
-    res.status(200).json(
-      createSuccessResponse(
-        'Users retrieved successfully',
-        {
-          users,
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages,
-            totalUsers,
-            hasNext: page < totalPages,
-            hasPrev: page > 1
-          }
-        }
-      )
-    );
-
-  } catch (error) {
-    console.error('Get all users error:', error);
-    res.status(500).json(
-      createErrorResponse('Internal server error while fetching users')
-    );
-  }
-};
-
 module.exports = {
   register,
   login,
-  getProfile,
+  getCurrentUser,
   updateProfile,
   changePassword,
   refreshToken,
-  logout,
-  getAllUsers
+  logout
 };

@@ -1,205 +1,117 @@
+// backend/routes/auth.js
 const express = require('express');
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { body } = require('express-validator');
+const {
+  register,
+  login,
+  getCurrentUser,
+  updateProfile,
+  changePassword,
+  refreshToken,
+  logout
+} = require('../controllers/authController');
+const {
+  requireAuth,
+  requireAdmin,
+  requireAssistant,
+  requireActiveUser
+} = require('../middleware/auth');
+
 const router = express.Router();
 
-// JWT Secret (you'll add this to your .env file)
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-const JWT_EXPIRE = process.env.JWT_EXPIRE || '24h';
+// Validation middleware
+const registerValidation = [
+  body('username')
+    .isLength({ min: 3, max: 20 })
+    .withMessage('Username must be between 3 and 20 characters')
+    .matches(/^[a-zA-Z0-9]+$/)
+    .withMessage('Username can only contain letters and numbers'),
+  body('email')
+    .isEmail()
+    .withMessage('Please enter a valid email')
+    .normalizeEmail(),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
+    .matches(/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
+    .withMessage('Password must contain letters, numbers, and special characters'),
+  body('fullName')
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Full name must be between 2 and 100 characters')
+    .trim(),
+  body('role')
+    .optional()
+    .isIn(['admin', 'assistant'])
+    .withMessage('Role must be admin or assistant')
+];
 
-// @route   POST /api/auth/login
-// @desc    Login user and return JWT token
-// @access  Public
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
+const loginValidation = [
+  body('login')
+    .notEmpty()
+    .withMessage('Username or email is required')
+    .trim(),
+  body('password')
+    .notEmpty()
+    .withMessage('Password is required')
+];
 
-    // Validation
-    if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide username and password'
-      });
-    }
+const profileUpdateValidation = [
+  body('fullName')
+    .optional()
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Full name must be between 2 and 100 characters')
+    .trim(),
+  body('email')
+    .optional()
+    .isEmail()
+    .withMessage('Please enter a valid email')
+    .normalizeEmail()
+];
 
-    // Find user and check password
-    const user = await User.findByCredentials(username, password);
-    
-    // Update last login
-    await user.updateLastLogin();
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { 
-        userId: user._id, 
-        username: user.username,
-        role: user.role 
-      },
-      JWT_SECRET,
-      { 
-        expiresIn: JWT_EXPIRE 
-      }
-    );
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        lastLogin: user.lastLogin
-      }
-    });
-
-  } catch (error) {
-    console.error('Login error:', error.message);
-    res.status(401).json({
-      success: false,
-      message: 'Invalid credentials'
-    });
-  }
-});
+const passwordChangeValidation = [
+  body('currentPassword')
+    .notEmpty()
+    .withMessage('Current password is required'),
+  body('newPassword')
+    .isLength({ min: 8 })
+    .withMessage('New password must be at least 8 characters')
+    .matches(/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
+    .withMessage('New password must contain letters, numbers, and special characters')
+];
 
 // @route   POST /api/auth/register
-// @desc    Register new user (admin only can create users)
-// @access  Private (Admin only)
-router.post('/register', async (req, res) => {
-  try {
-    const {
-      username,
-      email,
-      password,
-      firstName,
-      lastName,
-      role
-    } = req.body;
+// @desc    User registration
+// @access  Public
+router.post('/register', registerValidation, register);
 
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      $or: [{ email }, { username }]
-    });
-
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'User with this email or username already exists'
-      });
-    }
-
-    // Create new user
-    const user = new User({
-      username,
-      email,
-      password,
-      firstName,
-      lastName,
-      role: role || 'assistant'
-    });
-
-    await user.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'User created successfully',
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role
-      }
-    });
-
-  } catch (error) {
-    console.error('Registration error:', error);
-    
-    if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        message: 'Validation error',
-        errors: messages
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Server error during registration'
-    });
-  }
-});
-
-// @route   GET /api/auth/me
-// @desc    Get current user info
-// @access  Private
-router.get('/me', async (req, res) => {
-  try {
-    // Get token from header
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'No token provided'
-      });
-    }
-
-    // Verify token
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password -refreshToken');
-
-    if (!user || !user.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: 'User not found or inactive'
-      });
-    }
-
-    res.json({
-      success: true,
-      user
-    });
-
-  } catch (error) {
-    console.error('Auth verification error:', error.message);
-    res.status(401).json({
-      success: false,
-      message: 'Invalid token'
-    });
-  }
-});
+// @route   POST /api/auth/login
+// @desc    User login
+// @access  Public
+router.post('/login', loginValidation, login);
 
 // @route   POST /api/auth/logout
-// @desc    Logout user (clear refresh token)
+// @desc    User logout
 // @access  Private
-router.post('/logout', async (req, res) => {
-  try {
-    // Get token from header
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    
-    if (token) {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      await User.findByIdAndUpdate(decoded.userId, { refreshToken: null });
-    }
+router.post('/logout', requireAuth(), logout);
 
-    res.json({
-      success: true,
-      message: 'Logged out successfully'
-    });
+// @route   POST /api/auth/refresh
+// @desc    Refresh JWT token
+// @access  Public
+router.post('/refresh', refreshToken);
 
-  } catch (error) {
-    // Still return success even if token verification fails
-    res.json({
-      success: true,
-      message: 'Logged out successfully'
-    });
-  }
-});
+// @route   GET /api/auth/me
+// @desc    Get current user profile
+// @access  Private
+router.get('/me', requireActiveUser(), getCurrentUser);
+
+// @route   PUT /api/auth/profile
+// @desc    Update user profile
+// @access  Private
+router.put('/profile', requireActiveUser(), profileUpdateValidation, updateProfile);
+
+// @route   PUT /api/auth/password
+// @desc    Change password
+// @access  Private
+router.put('/password', requireActiveUser(), passwordChangeValidation, changePassword);
 
 module.exports = router;
