@@ -43,7 +43,8 @@ const register = async (req, res) => {
       );
     }
 
-    const { username, email, password, fullName, role = 'assistant' } = req.body;
+    // ✅ FIXED: Use firstName/lastName instead of fullName
+    const { username, email, password, firstName, lastName, role = 'assistant' } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({
@@ -64,18 +65,19 @@ const register = async (req, res) => {
       );
     }
 
-    // Create new user
+    // ✅ FIXED: Create new user with firstName/lastName
     const user = new User({
       username,
       email,
       password,
-      fullName,
+      firstName,
+      lastName,
       role
     });
 
     await user.save();
 
-    // Generate tokens
+    // Generate tokens using JWT utilities
     const accessToken = tokenUtils.generateToken(user._id, user.role);
     const refreshToken = tokenUtils.generateRefreshToken();
 
@@ -140,6 +142,13 @@ const login = async (req, res) => {
       );
     }
 
+    // Check if user is active
+    if (!user.isActive) {
+      return res.status(401).json(
+        createErrorResponse('Account is inactive. Please contact administrator.')
+      );
+    }
+
     // Check password
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
@@ -148,7 +157,7 @@ const login = async (req, res) => {
       );
     }
 
-    // Generate tokens
+    // Generate tokens using JWT utilities
     const accessToken = tokenUtils.generateToken(user._id, user.role);
     const refreshToken = tokenUtils.generateRefreshToken();
 
@@ -220,7 +229,8 @@ const updateProfile = async (req, res) => {
       );
     }
 
-    const { fullName, email } = req.body;
+    // ✅ FIXED: Use firstName/lastName instead of fullName
+    const { firstName, lastName, email } = req.body;
     const userId = req.user.userId;
 
     // Check if email is being changed and if it's already taken
@@ -237,10 +247,16 @@ const updateProfile = async (req, res) => {
       }
     }
 
+    // Prepare update object - only include fields that are provided
+    const updateFields = {};
+    if (firstName !== undefined) updateFields.firstName = firstName;
+    if (lastName !== undefined) updateFields.lastName = lastName;
+    if (email !== undefined) updateFields.email = email;
+
     // Update user
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { fullName, email },
+      updateFields,
       { new: true, runValidators: true }
     );
 
@@ -316,8 +332,12 @@ const changePassword = async (req, res) => {
     user.password = newPassword;
     await user.save();
 
+    // ✅ ENHANCEMENT: Clear all refresh tokens after password change for security
+    user.refreshToken = null;
+    await user.save();
+
     res.status(200).json(
-      createSuccessResponse('Password changed successfully')
+      createSuccessResponse('Password changed successfully. Please login again.')
     );
 
   } catch (error) {
@@ -341,28 +361,34 @@ const refreshToken = async (req, res) => {
       );
     }
 
-    // Verify refresh token
+    // ✅ ENHANCED: Verify refresh token using JWT utilities
     let decoded;
     try {
       decoded = tokenUtils.verifyToken(refreshToken);
+      
+      // Additional check for refresh token type
+      if (decoded.type !== 'refresh') {
+        throw new Error('Invalid token type');
+      }
     } catch (error) {
       return res.status(401).json(
-        createErrorResponse('Invalid refresh token')
+        createErrorResponse('Invalid or expired refresh token')
       );
     }
 
     // Find user with matching refresh token
     const user = await User.findOne({
-      refreshToken
+      refreshToken,
+      isActive: true // ✅ ENHANCEMENT: Only allow active users
     });
 
     if (!user) {
       return res.status(401).json(
-        createErrorResponse('Invalid refresh token')
+        createErrorResponse('Invalid refresh token or inactive user')
       );
     }
 
-    // Generate new tokens
+    // Generate new tokens using JWT utilities
     const newAccessToken = tokenUtils.generateToken(user._id, user.role);
     const newRefreshToken = tokenUtils.generateRefreshToken();
 
@@ -410,6 +436,33 @@ const logout = async (req, res) => {
   }
 };
 
+// @desc    Validate token (for frontend token checks)
+// @route   GET /api/auth/validate
+// @access  Private
+const validateToken = async (req, res) => {
+  try {
+    // If we reach here, the token is valid (middleware passed)
+    res.status(200).json(
+      createSuccessResponse('Token is valid', {
+        user: {
+          userId: req.user.userId,
+          username: req.user.username,
+          email: req.user.email,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          role: req.user.role,
+          isActive: req.user.isActive
+        }
+      })
+    );
+  } catch (error) {
+    console.error('Validate token error:', error);
+    res.status(500).json(
+      createErrorResponse('Internal server error during token validation')
+    );
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -417,5 +470,6 @@ module.exports = {
   updateProfile,
   changePassword,
   refreshToken,
-  logout
+  logout,
+  validateToken // ✅ NEW: Added token validation endpoint
 };

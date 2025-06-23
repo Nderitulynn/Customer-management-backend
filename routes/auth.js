@@ -35,9 +35,13 @@ const registerValidation = [
     .withMessage('Password must be at least 8 characters')
     .matches(/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
     .withMessage('Password must contain letters, numbers, and special characters'),
-  body('fullName')
-    .isLength({ min: 2, max: 100 })
-    .withMessage('Full name must be between 2 and 100 characters')
+  body('firstName')
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be between 2 and 50 characters')
+    .trim(),
+  body('lastName')
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be between 2 and 50 characters')
     .trim(),
   body('role')
     .optional()
@@ -56,10 +60,15 @@ const loginValidation = [
 ];
 
 const profileUpdateValidation = [
-  body('fullName')
+  body('firstName')
     .optional()
-    .isLength({ min: 2, max: 100 })
-    .withMessage('Full name must be between 2 and 100 characters')
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be between 2 and 50 characters')
+    .trim(),
+  body('lastName')
+    .optional()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be between 2 and 50 characters')
     .trim(),
   body('email')
     .optional()
@@ -79,39 +88,13 @@ const passwordChangeValidation = [
     .withMessage('New password must contain letters, numbers, and special characters')
 ];
 
-// @route   POST /api/auth/register
-// @desc    User registration
-// @access  Public
+// Routes
 router.post('/register', registerValidation, register);
-
-// @route   POST /api/auth/login
-// @desc    User login
-// @access  Public
 router.post('/login', loginValidation, login);
-
-// @route   POST /api/auth/logout
-// @desc    User logout
-// @access  Private
 router.post('/logout', requireAuth(), logout);
-
-// @route   POST /api/auth/refresh
-// @desc    Refresh JWT token
-// @access  Public
 router.post('/refresh', refreshToken);
-
-// @route   GET /api/auth/me
-// @desc    Get current user profile
-// @access  Private
 router.get('/me', requireActiveUser(), getCurrentUser);
-
-// @route   PUT /api/auth/profile
-// @desc    Update user profile
-// @access  Private
 router.put('/profile', requireActiveUser(), profileUpdateValidation, updateProfile);
-
-// @route   PUT /api/auth/password
-// @desc    Change password
-// @access  Private
 router.put('/password', requireActiveUser(), passwordChangeValidation, changePassword);
 
 module.exports = router;

@@ -5,6 +5,9 @@ const { jwtStrategy } = require('../config/jwt');
 // Initialize Passport JWT strategy
 passport.use('jwt', jwtStrategy);
 
+// Simple auth middleware for direct use in routes
+const auth = passport.authenticate('jwt', { session: false });
+
 // Basic authentication middleware
 const requireAuth = () => {
   return passport.authenticate('jwt', { session: false });
@@ -172,6 +175,7 @@ const handleAuthError = (err, req, res, next) => {
 };
 
 module.exports = {
+  auth,
   requireAuth,
   requireAdmin,
   requireAssistant,

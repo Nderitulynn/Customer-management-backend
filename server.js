@@ -17,8 +17,8 @@ const { jwtStrategy } = require('./config/jwt');
 const authRoutes = require('./routes/auth');
 const customerRoutes = require('./routes/customers');
 
-// Import middleware
-const { requireAuth } = require('./middleware/permissions');
+// Import middleware - FIXED: Import from correct path
+const { auth } = require('./middleware/auth');
 
 // Connect to MongoDB
 connectDB();
@@ -137,8 +137,8 @@ if (process.env.NODE_ENV === 'development') {
 // Auth routes with stricter rate limiting
 app.use('/api/auth', authLimiter, authRoutes);
 
-// Protected customer routes
-app.use('/api/customers', requireAuth, customerRoutes);
+// Protected customer routes - FIXED: Use 'auth' instead of 'requireAuth'
+app.use('/api/customers', auth, customerRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
