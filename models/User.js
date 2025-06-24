@@ -1,6 +1,6 @@
-// backend/models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { USER_ROLES } = require('../../utils/constants');
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -40,8 +40,8 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'assistant'],
-    default: 'assistant',
+    enum: Object.values(USER_ROLES), // Uses constants instead of hardcoded values
+    default: USER_ROLES.ASSISTANT,   // Uses constant instead of hardcoded string
     required: true
   },
   isActive: {
@@ -117,6 +117,17 @@ userSchema.statics.findByCredentials = async function(username, password) {
 userSchema.methods.updateLastLogin = function() {
   this.lastLogin = new Date();
   return this.save();
+};
+
+// Method to check if user has specific permission
+userSchema.methods.hasPermission = function(permission) {
+  const { PERMISSIONS } = require('../../utils/constants');
+  return PERMISSIONS[this.role]?.includes(permission) || false;
+};
+
+// Method to check if user is admin
+userSchema.methods.isAdmin = function() {
+  return this.role === USER_ROLES.ADMIN;
 };
 
 const User = mongoose.model('User', userSchema);
