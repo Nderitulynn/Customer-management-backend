@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const { USER_ROLES } = require('../../utils/constants');
+const { USER_ROLES } = require('../utils/constants');
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -121,7 +121,7 @@ userSchema.methods.updateLastLogin = function() {
 
 // Method to check if user has specific permission
 userSchema.methods.hasPermission = function(permission) {
-  const { PERMISSIONS } = require('../../utils/constants');
+  const { PERMISSIONS } = require('../utils/constants');
   return PERMISSIONS[this.role]?.includes(permission) || false;
 };
 

@@ -274,6 +274,7 @@ router.get('/management-report',
         },
         generatedAt: new Date().toISOString()
       };
+add .
 
       res.json(report);
     } catch (error) {

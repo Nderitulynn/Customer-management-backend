@@ -1,12 +1,8 @@
-// backend/routes/customers.js
 const express = require('express');
 const Customer = require('../models/Customer');
 const { auth, authorize } = require('../middleware/auth');
 const router = express.Router();
 
-// @route   GET /api/customers
-// @desc    Get all customers with pagination and filtering
-// @access  Private (Admin & Assistant)
 router.get('/', auth, async (req, res) => {
   try {
     const {
