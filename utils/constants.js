@@ -1,16 +1,16 @@
 // User roles and permissions
-export const USER_ROLES = {
+const USER_ROLES = {
   ADMIN: 'admin',
   ASSISTANT: 'assistant'
 };
 
-export const PERMISSIONS = {
+const PERMISSIONS = {
   [USER_ROLES.ADMIN]: ['read', 'write', 'delete', 'manage_users'],
   [USER_ROLES.ASSISTANT]: ['read', 'write']
 };
 
 // Order statuses
-export const ORDER_STATUS = {
+const ORDER_STATUS = {
   PENDING: 'pending',
   CONFIRMED: 'confirmed',
   IN_PROGRESS: 'in_progress',
@@ -19,13 +19,13 @@ export const ORDER_STATUS = {
 };
 
 // Notification types and priorities
-export const NOTIFICATION_TYPES = {
+const NOTIFICATION_TYPES = {
   ORDER_UPDATE: 'order_update',
   SYSTEM_ALERT: 'system_alert',
   USER_MESSAGE: 'user_message'
 };
 
-export const NOTIFICATION_PRIORITY = {
+const NOTIFICATION_PRIORITY = {
   LOW: 'low',
   MEDIUM: 'medium',
   HIGH: 'high',
@@ -33,7 +33,7 @@ export const NOTIFICATION_PRIORITY = {
 };
 
 // API response codes and messages
-export const API_RESPONSES = {
+const API_RESPONSES = {
   SUCCESS: {
     code: 200,
     message: 'Success'
@@ -65,7 +65,7 @@ export const API_RESPONSES = {
 };
 
 // WhatsApp message statuses
-export const WHATSAPP_STATUS = {
+const WHATSAPP_STATUS = {
   PENDING: 'pending',
   SENT: 'sent',
   DELIVERED: 'delivered',
@@ -74,8 +74,19 @@ export const WHATSAPP_STATUS = {
 };
 
 // Default values
-export const DEFAULTS = {
+const DEFAULTS = {
   PAGE_SIZE: 20,
   MAX_RETRY_ATTEMPTS: 3,
   SESSION_TIMEOUT: 3600000 // 1 hour in milliseconds
+};
+
+module.exports = {
+  USER_ROLES,
+  PERMISSIONS,
+  ORDER_STATUS,
+  NOTIFICATION_TYPES,
+  NOTIFICATION_PRIORITY,
+  API_RESPONSES,
+  WHATSAPP_STATUS,
+  DEFAULTS
 };
