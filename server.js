@@ -75,17 +75,17 @@ const authLimiter = rateLimit({
 // Apply general rate limiting
 app.use(generalLimiter);
 
-// CORS configuration
+// CORS configuration - FIXED: Updated ports to match Vite frontend
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
-      process.env.CLIENT_URL || 'http://localhost:3000',
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://127.0.0.1:3000'
+      process.env.CLIENT_URL || 'http://localhost:5173',
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://127.0.0.1:5173'
     ];
     
     if (allowedOrigins.includes(origin)) {
@@ -222,12 +222,12 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-// Start server
+// Start server - FIXED: Corrected port number in console log
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔒 JWT Authentication: ${process.env.JWT_SECRET ? 'Configured' : 'NOT CONFIGURED!'}`);
-  console.log(`🌐 CORS Origin: ${process.env.CLIENT_URL || 'http://localhost:3000'}`);
+  console.log(`🌐 CORS Origin: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
 });
 
 module.exports = app;
