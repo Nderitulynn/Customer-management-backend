@@ -20,9 +20,6 @@ const userRoutes = require('./routes/users');
 // Import middleware - FIXED: Import from correct path
 const { authenticate } = require('./middleware/auth');
 
-// Connect to MongoDB
-connectDB();
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -215,7 +212,7 @@ app.use('*', (req, res) => {
   });
 });
 
-// Graceful shutdown
+// Graceful shutdown handlers
 process.on('SIGTERM', () => {
   console.log('SIGTERM received. Shutting down gracefully...');
   process.exit(0);
@@ -226,12 +223,27 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-// Start server - FIXED: Corrected port number in console log
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔒 JWT Authentication: ${process.env.JWT_SECRET ? 'Configured' : 'NOT CONFIGURED!'}`);
-  console.log(`🌐 CORS Origin: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
-});
+// ===== FIXED: START SERVER WITH PROPER DATABASE CONNECTION TIMING =====
+const startServer = async () => {
+  try {
+    // STEP 1: Connect to database FIRST
+    await connectDB();
+    
+    // STEP 2: Start server AFTER database is connected
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔒 JWT Authentication: ${process.env.JWT_SECRET ? 'Configured' : 'NOT CONFIGURED!'}`);
+      console.log(`🌐 CORS Origin: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+    });
+    
+  } catch (error) {
+    console.error('❌ Failed to start server:', error.message);
+    process.exit(1);
+  }
+};
+
+// Start the server
+startServer();
 
 module.exports = app;
