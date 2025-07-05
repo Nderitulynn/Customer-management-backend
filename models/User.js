@@ -1,4 +1,5 @@
-// /models/User.js
+// models/User.js - Fixed version (Clean up Mongoose warnings)
+
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
@@ -62,7 +63,6 @@ const userSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
 
@@ -96,5 +96,7 @@ userSchema.methods.toJSON = function() {
   return user;
 };
 
-module.exports = mongoose.model('User', userSchema);
+// Export the model and USER_ROLES constant
+const User = mongoose.model('User', userSchema);
+module.exports = User;
 module.exports.USER_ROLES = USER_ROLES;

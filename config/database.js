@@ -1,13 +1,12 @@
-// backend/config/database.js
+// backend/config/database.js - Fixed version (Remove deprecated options)
 const mongoose = require('mongoose');
 require('dotenv').config();
 
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/customer-management', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    // Remove deprecated options: useNewUrlParser and useUnifiedTopology
+    // These options are now defaults and cause warnings in newer Mongoose versions
+    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/customer-management');
     
     console.log('✅ MongoDB Connected Successfully!');
     console.log(`📍 Host: ${conn.connection.host}`);
