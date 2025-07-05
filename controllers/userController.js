@@ -20,13 +20,12 @@ const registerAdmin = async (req, res) => {
       return res.status(400).json({ error: 'Email already exists' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12);
-
+    // FIXED: Remove manual hashing - let User model handle it
     const admin = new User({
       firstName,
       lastName,
       email,
-      password: hashedPassword,
+      password, // Plain text password - User model will hash it
       role: 'admin',
       isActive: true
     });
@@ -61,13 +60,13 @@ const createAssistant = async (req, res) => {
 
     // Generate temporary password
     const tempPassword = generatePassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
+    // FIXED: Remove manual hashing - let User model handle it
 
     const assistant = new User({
       firstName,
       lastName,
       email,
-      password: hashedPassword,
+      password: tempPassword, // Plain text password - User model will hash it
       role: 'assistant',
       isActive: true,
       mustChangePassword: true,
@@ -213,9 +212,9 @@ const resetPassword = async (req, res) => {
     }
 
     const newPassword = generatePassword();
-    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    // FIXED: Remove manual hashing - let User model handle it
 
-    assistant.password = hashedPassword;
+    assistant.password = newPassword; // Plain text password - User model will hash it
     assistant.mustChangePassword = true;
     await assistant.save();
 
@@ -280,11 +279,8 @@ const changeMyPassword = async (req, res) => {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
 
-    // Hash new password
-    const hashedNewPassword = await bcrypt.hash(newPassword, 12);
-    
-    // Update password and reset flag
-    user.password = hashedNewPassword;
+    // FIXED: Remove manual hashing - let User model handle it
+    user.password = newPassword; // Plain text password - User model will hash it
     user.mustChangePassword = false;
     await user.save();
 
