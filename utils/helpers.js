@@ -1,6 +1,6 @@
 // Data formatting utilities for dashboard displays
 function formatCurrency(amount) {
-  return `KSh ${parseFloat(amount || 0).toLocaleString()}`;
+  return parseFloat(amount || 0).toLocaleString();
 }
 
 function formatOrderCount(count) {
@@ -104,6 +104,47 @@ function paginatedResponse(data, meta, message = 'Data retrieved') {
   };
 }
 
+// Password generation utility
+function generatePassword(length = 8) {
+  const lowercase = 'abcdefghijklmnopqrstuvwxyz';
+  const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const numbers = '0123456789';
+  const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+  
+  // Ensure password has at least one character from each category
+  const allChars = lowercase + uppercase + numbers + symbols;
+  let password = '';
+  
+  // Add one character from each category first
+  password += lowercase[Math.floor(Math.random() * lowercase.length)];
+  password += uppercase[Math.floor(Math.random() * uppercase.length)];
+  password += numbers[Math.floor(Math.random() * numbers.length)];
+  password += symbols[Math.floor(Math.random() * symbols.length)];
+  
+  // Fill the rest with random characters
+  for (let i = password.length; i < length; i++) {
+    password += allChars[Math.floor(Math.random() * allChars.length)];
+  }
+  
+  // Shuffle the password to avoid predictable patterns
+  return password.split('').sort(() => Math.random() - 0.5).join('');
+}
+
+// Email sending utility (placeholder - implement with your email service)
+function sendEmail(email, subject, message) {
+  // This is a placeholder function - implement with your preferred email service
+  // Example: nodemailer, sendgrid, etc.
+  console.log(`Sending email to: ${email}`);
+  console.log(`Subject: ${subject}`);
+  console.log(`Message: ${message}`);
+  
+  // Return a promise for async handling
+  return Promise.resolve({
+    success: true,
+    message: 'Email sent successfully'
+  });
+}
+
 module.exports = {
   formatCurrency,
   formatOrderCount,
@@ -118,5 +159,7 @@ module.exports = {
   getPaginationMeta,
   successResponse,
   errorResponse,
-  paginatedResponse
+  paginatedResponse,
+  generatePassword,
+  sendEmail
 };
