@@ -1,135 +1,100 @@
+// /models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const { USER_ROLES } = require('../utils/constants');
+
+const USER_ROLES = {
+  ADMIN: 'admin',
+  ASSISTANT: 'assistant'
+};
 
 const userSchema = new mongoose.Schema({
-  username: {
+  firstName: {
     type: String,
-    required: [true, 'Username is required'],
-    unique: true,
+    required: [true, 'First name is required'],
     trim: true,
-    minlength: [3, 'Username must be at least 3 characters'],
-    maxlength: [20, 'Username cannot exceed 20 characters'],
-    match: [/^[a-zA-Z0-9]+$/, 'Username can only contain letters and numbers']
+    minlength: [2, 'First name must be at least 2 characters']
+  },
+  lastName: {
+    type: String,
+    required: [true, 'Last name is required'],
+    trim: true,
+    minlength: [2, 'Last name must be at least 2 characters']
   },
   email: {
     type: String,
     required: [true, 'Email is required'],
     unique: true,
     lowercase: true,
-    trim: true,
-    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
+    validate: {
+      validator: function(v) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      },
+      message: 'Please enter a valid email'
+    }
   },
   password: {
     type: String,
     required: [true, 'Password is required'],
-    minlength: [8, 'Password must be at least 8 characters'],
-    validate: {
-      validator: function(password) {
-        // Password must contain: letters, numbers, and special characters
-        return /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/.test(password);
-      },
-      message: 'Password must contain letters, numbers, and special characters'
-    }
-  },
-  fullName: {
-    type: String,
-    required: [true, 'Full name is required'],
-    trim: true,
-    maxlength: [100, 'Full name cannot exceed 100 characters']
+    minlength: [8, 'Password must be at least 8 characters']
   },
   role: {
     type: String,
-    enum: Object.values(USER_ROLES), // Uses constants instead of hardcoded values
-    default: USER_ROLES.ASSISTANT,   // Uses constant instead of hardcoded string
-    required: true
+    enum: Object.values(USER_ROLES),
+    default: USER_ROLES.ASSISTANT
   },
   isActive: {
     type: Boolean,
     default: true
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
   lastLogin: {
-    type: Date,
-    default: null
+    type: Date
   },
-  refreshToken: {
-    type: String,
-    default: null
+  mustChangePassword: {
+    type: Boolean,
+    default: false
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: function() {
+      return this.role === USER_ROLES.ASSISTANT;
+    }
   }
+}, {
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-// Create indexes for performance
-userSchema.index({ username: 1 });
-userSchema.index({ email: 1 });
+// Virtual for full name
+userSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`;
+});
 
-// Pre-save hook to hash passwords with bcrypt (12 rounds)
+// Pre-save middleware to hash password
 userSchema.pre('save', async function(next) {
-  // Only hash the password if it has been modified (or is new)
   if (!this.isModified('password')) return next();
   
   try {
-    // Hash password with cost of 12
-    const hashedPassword = await bcrypt.hash(this.password, 12);
-    this.password = hashedPassword;
+    const salt = await bcrypt.genSalt(12);
+    this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (error) {
     next(error);
   }
 });
 
-// Password comparison method
-userSchema.methods.comparePassword = async function(candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
+// Method to check password
+userSchema.methods.comparePassword = async function(password) {
+  return await bcrypt.compare(password, this.password);
 };
 
-// JSON transform to exclude password from responses
+// Remove password from JSON output
 userSchema.methods.toJSON = function() {
-  const userObject = this.toObject();
-  delete userObject.password;
-  delete userObject.refreshToken;
-  return userObject;
-};
-
-// Static method to find user by credentials
-userSchema.statics.findByCredentials = async function(username, password) {
-  const user = await this.findOne({ 
-    $or: [{ username }, { email: username }],
-    isActive: true 
-  });
-  
-  if (!user) {
-    throw new Error('Invalid login credentials');
-  }
-  
-  const isMatch = await user.comparePassword(password);
-  if (!isMatch) {
-    throw new Error('Invalid login credentials');
-  }
-  
+  const user = this.toObject();
+  delete user.password;
   return user;
 };
 
-// Update last login method
-userSchema.methods.updateLastLogin = function() {
-  this.lastLogin = new Date();
-  return this.save();
-};
-
-// Method to check if user has specific permission
-userSchema.methods.hasPermission = function(permission) {
-  const { PERMISSIONS } = require('../utils/constants');
-  return PERMISSIONS[this.role]?.includes(permission) || false;
-};
-
-// Method to check if user is admin
-userSchema.methods.isAdmin = function() {
-  return this.role === USER_ROLES.ADMIN;
-};
-
-const User = mongoose.model('User', userSchema);
-
-module.exports = User;
+module.exports = mongoose.model('User', userSchema);
+module.exports.USER_ROLES = USER_ROLES;

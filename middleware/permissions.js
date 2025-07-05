@@ -1,124 +1,235 @@
-/ File 7: middleware/rolePermissions.js
-const { ROLES } = require('../utils/roleBasedFilter');
-const { logCustomerAccess } = require('../utils/auditLogger');
+// middleware/permissions.js
+const { USER_ROLES, OPERATIONS, ENTITIES } = require('../utils/constants');
+const { logCustomerAccess, logUnauthorizedAccess } = require('../utils/auditLogger');
 
-const OPERATIONS = {
-  CREATE: 'create',
-  READ: 'read',
-  UPDATE: 'update',
-  DELETE: 'delete',
-  SEARCH: 'search'
-};
-
+// Entity-based permission matrix
 const PERMISSION_MATRIX = {
-  [ROLES.ADMIN]: {
-    [OPERATIONS.CREATE]: true,
-    [OPERATIONS.READ]: true,
-    [OPERATIONS.UPDATE]: true,
-    [OPERATIONS.DELETE]: true,
-    [OPERATIONS.SEARCH]: true
+  [USER_ROLES.ADMIN]: {
+    [ENTITIES.CUSTOMERS]: [OPERATIONS.CREATE, OPERATIONS.READ, OPERATIONS.UPDATE, OPERATIONS.DELETE],
+    [ENTITIES.ORDERS]: [OPERATIONS.CREATE, OPERATIONS.READ, OPERATIONS.UPDATE, OPERATIONS.DELETE],
+    [ENTITIES.USERS]: [OPERATIONS.CREATE, OPERATIONS.READ, OPERATIONS.UPDATE, OPERATIONS.DELETE],
+    [ENTITIES.FINANCIAL_DATA]: [OPERATIONS.READ]
   },
-  [ROLES.ASSISTANT]: {
-    [OPERATIONS.CREATE]: true,
-    [OPERATIONS.READ]: true,
-    [OPERATIONS.UPDATE]: true,
-    [OPERATIONS.DELETE]: false,
-    [OPERATIONS.SEARCH]: true
+  [USER_ROLES.ASSISTANT]: {
+    [ENTITIES.CUSTOMERS]: [OPERATIONS.CREATE, OPERATIONS.READ, OPERATIONS.UPDATE], // No DELETE
+    [ENTITIES.ORDERS]: [OPERATIONS.CREATE, OPERATIONS.READ, OPERATIONS.UPDATE],
+    [ENTITIES.USERS]: [], // Cannot manage users
+    [ENTITIES.FINANCIAL_DATA]: [] // Cannot access financial data
   }
 };
 
-function checkCustomerAccess(requiredRole) {
-  return (req, res, next) => {
-    const userRole = req.user?.role;
-    
-    if (!userRole) {
-      logUnauthorizedAccess(req.user?.id, 'No role provided');
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-
-    if (requiredRole && userRole !== requiredRole && userRole !== ROLES.ADMIN) {
-      logUnauthorizedAccess(req.user.id, `Insufficient role: ${userRole}`);
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-
-    next();
-  };
-}
-
-function validateRoleForOperation(userRole, operation) {
-  if (!userRole || !operation) {
+/**
+ * Check if user has permission for specific entity and operation
+ */
+function hasPermission(userRole, entity, operation) {
+  if (!userRole || !entity || !operation) {
     return false;
   }
 
   const permissions = PERMISSION_MATRIX[userRole];
-  if (!permissions) {
+  if (!permissions || !permissions[entity]) {
     return false;
   }
 
-  return permissions[operation] === true;
+  return permissions[entity].includes(operation);
 }
 
-function restrictFinancialData(userRole) {
-  return (req, res, next) => {
-    if (userRole === ROLES.ASSISTANT) {
-      // Add flag to request to filter financial data in response
-      req.restrictFinancialData = true;
-    }
-    next();
-  };
-}
-
-function logUnauthorizedAccess(userId, attemptedAction) {
-  const logEntry = {
-    userId: userId || 'unknown',
-    action: 'UNAUTHORIZED_ACCESS',
-    timestamp: new Date(),
-    attemptedAction,
-    severity: 'HIGH'
-  };
-
-  console.warn('Security Alert:', logEntry);
+/**
+ * Check if user can access specific resource (data ownership logic)
+ */
+function canAccessResource(userRole, userId, resourceOwnerId) {
+  // Admin can access all resources
+  if (userRole === USER_ROLES.ADMIN) {
+    return true;
+  }
   
-  // In a real application, this would save to security logs
-  return logEntry;
+  // Assistant can only access their own resources
+  if (userRole === USER_ROLES.ASSISTANT) {
+    return userId === resourceOwnerId;
+  }
+  
+  return false;
 }
 
-function requirePermission(operation) {
+/**
+ * Middleware to check entity-based permissions
+ */
+function requirePermission(entity, operation) {
   return (req, res, next) => {
     const userRole = req.user?.role;
+    const userId = req.user?.id;
     
-    if (!validateRoleForOperation(userRole, operation)) {
-      logUnauthorizedAccess(req.user?.id, `Attempted ${operation} without permission`);
+    // Check basic permission
+    if (!hasPermission(userRole, entity, operation)) {
+      logUnauthorizedAccess(userId, `Attempted ${operation} on ${entity} without permission`);
       return res.status(403).json({ 
-        error: `Not authorized to perform ${operation} operation` 
+        error: `Not authorized to perform ${operation} on ${entity}` 
       });
     }
 
-    // Log the access
+    // For assistants, add ownership filter to request
+    if (userRole === USER_ROLES.ASSISTANT) {
+      req.ownershipFilter = { createdBy: userId };
+    }
+
+    // Log the access attempt
     if (req.params.customerId) {
-      logCustomerAccess(req.user.id, req.params.customerId, operation, userRole);
+      logCustomerAccess(userId, req.params.customerId, operation, userRole);
     }
 
     next();
   };
+}
+
+/**
+ * Middleware to check resource ownership for specific resources
+ */
+function checkResourceOwnership(entity) {
+  return async (req, res, next) => {
+    const userRole = req.user?.role;
+    const userId = req.user?.id;
+    
+    // Admin can access all resources
+    if (userRole === USER_ROLES.ADMIN) {
+      return next();
+    }
+    
+    // For assistants, verify they own the resource
+    if (userRole === USER_ROLES.ASSISTANT) {
+      const resourceId = req.params.customerId || req.params.orderId || req.params.id;
+      
+      if (resourceId) {
+        // This would need to be implemented with actual database queries
+        // For now, we'll add the ownership requirement to the request
+        req.requireOwnership = true;
+        req.resourceOwnerId = userId;
+      }
+    }
+    
+    next();
+  };
+}
+
+/**
+ * Filter financial data from responses for assistants
+ */
+function filterFinancialData(data, userRole) {
+  if (userRole === USER_ROLES.ADMIN) {
+    return data;
+  }
+  
+  const financialFields = [
+    'creditLimit', 
+    'paymentTerms', 
+    'balance', 
+    'revenue',
+    'totalSpent',
+    'outstandingBalance',
+    'creditScore',
+    'paymentHistory'
+  ];
+  
+  if (Array.isArray(data)) {
+    return data.map(item => removeFinancialFields(item, financialFields));
+  } else {
+    return removeFinancialFields(data, financialFields);
+  }
+}
+
+/**
+ * Remove financial fields from object
+ */
+function removeFinancialFields(obj, fieldsToRemove) {
+  if (!obj || typeof obj !== 'object') {
+    return obj;
+  }
+  
+  const filtered = { ...obj };
+  fieldsToRemove.forEach(field => {
+    delete filtered[field];
+  });
+  
+  return filtered;
+}
+
+/**
+ * Middleware to filter response data
+ */
+function filterResponse(entity) {
+  return (req, res, next) => {
+    const userRole = req.user?.role;
+    
+    // Override res.json to filter data before sending
+    const originalJson = res.json;
+    res.json = function(data) {
+      // Filter financial data for assistants
+      if (userRole === USER_ROLES.ASSISTANT && 
+          (entity === ENTITIES.CUSTOMERS || entity === ENTITIES.ORDERS)) {
+        data = filterFinancialData(data, userRole);
+      }
+      
+      return originalJson.call(this, data);
+    };
+    
+    next();
+  };
+}
+
+/**
+ * Check if user can register other users (only admins)
+ */
+function canRegisterUsers(userRole) {
+  return userRole === USER_ROLES.ADMIN;
+}
+
+/**
+ * Middleware to restrict user registration to admins only
+ */
+function requireAdminForUserRegistration() {
+  return (req, res, next) => {
+    const userRole = req.user?.role;
+    
+    if (!canRegisterUsers(userRole)) {
+      logUnauthorizedAccess(req.user?.id, 'Attempted user registration without admin privileges');
+      return res.status(403).json({ 
+        error: 'Only administrators can register new users' 
+      });
+    }
+    
+    next();
+  };
+}
+
+/**
+ * Legacy compatibility functions
+ */
+function validateRoleForOperation(userRole, operation) {
+  // This is kept for backward compatibility
+  // In new system, use hasPermission instead
+  return hasPermission(userRole, 'customers', operation);
+}
+
+function hasAdminAccess(userRole) {
+  return userRole === USER_ROLES.ADMIN;
 }
 
 function extractUserRole(req) {
   return req.user?.role || null;
 }
 
-function hasAdminAccess(userRole) {
-  return userRole === ROLES.ADMIN;
-}
-
 module.exports = {
-  OPERATIONS,
   PERMISSION_MATRIX,
-  checkCustomerAccess,
-  validateRoleForOperation,
-  restrictFinancialData,
-  logUnauthorizedAccess,
+  hasPermission,
+  canAccessResource,
   requirePermission,
-  extractUserRole,
-  hasAdminAccess
+  checkResourceOwnership,
+  filterFinancialData,
+  filterResponse,
+  canRegisterUsers,
+  requireAdminForUserRegistration,
+  
+  // Legacy compatibility
+  validateRoleForOperation,
+  hasAdminAccess,
+  extractUserRole
 };

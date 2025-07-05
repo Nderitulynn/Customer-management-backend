@@ -16,9 +16,10 @@ const { jwtStrategy } = require('./config/jwt');
 // Import routes
 const authRoutes = require('./routes/auth');
 const customerRoutes = require('./routes/customers');
+const userRoutes = require('./routes/users');
 
 // Import middleware - FIXED: Import from correct path
-const { auth } = require('./middleware/auth');
+const { authenticate } = require('./middleware/auth');
 
 // Connect to MongoDB
 connectDB();
@@ -138,7 +139,10 @@ if (process.env.NODE_ENV === 'development') {
 app.use('/api/auth', authLimiter, authRoutes);
 
 // Protected customer routes - FIXED: Use 'auth' instead of 'requireAuth'
-app.use('/api/customers', auth, customerRoutes);
+app.use('/api/customers', authenticate, customerRoutes);
+
+// Protected user routes
+app.use('/api/users', userRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
@@ -149,7 +153,8 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString(),
     endpoints: {
       auth: '/api/auth',
-      customers: '/api/customers (requires authentication)'
+      customers: '/api/customers (requires authentication)',
+      users: '/api/users (requires authentication)'
     },
     environment: process.env.NODE_ENV || 'development',
     security: {

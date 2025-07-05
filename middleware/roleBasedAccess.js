@@ -1,50 +1,66 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User'); // Adjust path as needed
+const User = require('../models/User');
 
-// Define role hierarchy and permissions
+// Define role hierarchy - matches your requirements
 const ROLES = {
   ADMIN: 'admin',
   ASSISTANT: 'assistant'
 };
 
+// Define permissions based on your actual requirements
 const PERMISSIONS = {
-  // Financial operations
-  VIEW_FINANCIAL_DATA: 'view_financial_data',
-  EDIT_FINANCIAL_DATA: 'edit_financial_data',
-  DELETE_FINANCIAL_DATA: 'delete_financial_data',
-  EXPORT_FINANCIAL_DATA: 'export_financial_data',
+  // Customer management
+  CREATE_CUSTOMERS: 'create_customers',
+  VIEW_CUSTOMERS: 'view_customers',
+  UPDATE_CUSTOMERS: 'update_customers',
+  DELETE_CUSTOMERS: 'delete_customers',
   
-  // User management
-  VIEW_USERS: 'view_users',
+  // Order management
+  CREATE_ORDERS: 'create_orders',
+  VIEW_ORDERS: 'view_orders',
+  UPDATE_ORDERS: 'update_orders',
+  DELETE_ORDERS: 'delete_orders',
+  
+  // User management (only admins)
   CREATE_USERS: 'create_users',
-  EDIT_USERS: 'edit_users',
+  VIEW_USERS: 'view_users',
+  UPDATE_USERS: 'update_users',
   DELETE_USERS: 'delete_users',
   
-  // System configuration
-  VIEW_SYSTEM_CONFIG: 'view_system_config',
-  EDIT_SYSTEM_CONFIG: 'edit_system_config',
-  MANAGE_ROLES: 'manage_roles',
+  // Financial data (only admins)
+  VIEW_FINANCIAL_DATA: 'view_financial_data',
   
-  // General operations
+  // System operations
   VIEW_REPORTS: 'view_reports',
-  CREATE_REPORTS: 'create_reports',
-  EDIT_REPORTS: 'edit_reports'
+  EXPORT_DATA: 'export_data'
 };
 
-// Role-permission mapping
+// Role-permission mapping that matches your requirements
 const ROLE_PERMISSIONS = {
   [ROLES.ADMIN]: [
     // Full access to everything
     ...Object.values(PERMISSIONS)
   ],
   [ROLES.ASSISTANT]: [
-    // Limited access - can view and create but not delete or manage system
-    PERMISSIONS.VIEW_FINANCIAL_DATA,
-    PERMISSIONS.EDIT_FINANCIAL_DATA,
-    PERMISSIONS.VIEW_USERS,
+    // Limited access based on your requirements:
+    // - Can create/update customers but NOT delete
+    PERMISSIONS.CREATE_CUSTOMERS,
+    PERMISSIONS.VIEW_CUSTOMERS,
+    PERMISSIONS.UPDATE_CUSTOMERS,
+    // NOTE: NO DELETE_CUSTOMERS permission
+    
+    // - Can create/update orders but NOT delete
+    PERMISSIONS.CREATE_ORDERS,
+    PERMISSIONS.VIEW_ORDERS,
+    PERMISSIONS.UPDATE_ORDERS,
+    // NOTE: NO DELETE_ORDERS permission
+    
+    // - Can view reports
     PERMISSIONS.VIEW_REPORTS,
-    PERMISSIONS.CREATE_REPORTS,
-    PERMISSIONS.EDIT_REPORTS
+    
+    // NOTE: NO user management permissions
+    // NOTE: NO financial data permissions
+    // NOTE: NO system configuration permissions
   ]
 };
 
@@ -119,15 +135,6 @@ const authenticateToken = async (req, res, next) => {
 
     console.error('Authentication error:', error);
     
-    // More detailed logging in development
-    if (process.env.NODE_ENV === 'development') {
-      console.error('Full error details:', {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      });
-    }
-    
     return res.status(500).json({
       success: false,
       message: 'Authentication failed'
@@ -199,52 +206,8 @@ const checkPermission = (requiredPermission) => {
 };
 
 /**
- * Middleware to check multiple permissions (user must have ALL)
- */
-const checkPermissions = (requiredPermissions) => {
-  return [
-    authenticateToken,
-    (req, res, next) => {
-      const hasAllPermissions = requiredPermissions.every(permission => 
-        req.user.permissions.includes(permission)
-      );
-
-      if (!hasAllPermissions) {
-        return res.status(403).json({
-          success: false,
-          message: `Missing required permissions: ${requiredPermissions.join(', ')}`
-        });
-      }
-      next();
-    }
-  ];
-};
-
-/**
- * Middleware to check if user has any of the specified permissions
- */
-const checkAnyPermission = (permissionOptions) => {
-  return [
-    authenticateToken,
-    (req, res, next) => {
-      const hasAnyPermission = permissionOptions.some(permission => 
-        req.user.permissions.includes(permission)
-      );
-
-      if (!hasAnyPermission) {
-        return res.status(403).json({
-          success: false,
-          message: `One of these permissions required: ${permissionOptions.join(', ')}`
-        });
-      }
-      next();
-    }
-  ];
-};
-
-/**
  * Middleware for resource ownership check
- * Allows access if user is admin or owns the resource
+ * CRITICAL: Assistants can only access their own customers/orders
  */
 const requireOwnershipOrAdmin = (getResourceOwnerId) => {
   return [
@@ -256,14 +219,16 @@ const requireOwnershipOrAdmin = (getResourceOwnerId) => {
           return next();
         }
 
-        // Get the resource owner ID
-        const ownerId = await getResourceOwnerId(req);
-        
-        if (req.user.id.toString() !== ownerId.toString()) {
-          return res.status(403).json({
-            success: false,
-            message: 'Access denied: You can only access your own resources'
-          });
+        // For assistants, verify they own the resource
+        if (req.user.role === ROLES.ASSISTANT) {
+          const ownerId = await getResourceOwnerId(req);
+          
+          if (req.user.id.toString() !== ownerId.toString()) {
+            return res.status(403).json({
+              success: false,
+              message: 'Access denied: You can only access your own customers/orders'
+            });
+          }
         }
 
         next();
@@ -279,6 +244,29 @@ const requireOwnershipOrAdmin = (getResourceOwnerId) => {
 };
 
 /**
+ * Middleware to filter database queries for assistants
+ * CRITICAL: Ensures assistants only see their own data
+ */
+const addOwnershipFilter = (req, res, next) => {
+  if (req.user.role === ROLES.ASSISTANT) {
+    // Add ownership filter to database queries
+    req.ownershipFilter = { createdBy: req.user.id };
+  }
+  next();
+};
+
+/**
+ * Middleware to prevent financial data access for assistants
+ */
+const restrictFinancialAccess = (req, res, next) => {
+  if (req.user.role === ROLES.ASSISTANT) {
+    // Flag to filter financial data from responses
+    req.restrictFinancialData = true;
+  }
+  next();
+};
+
+/**
  * Utility function to check if user has permission
  */
 const hasPermission = (user, permission) => {
@@ -286,46 +274,24 @@ const hasPermission = (user, permission) => {
 };
 
 /**
- * Utility function to check if user has role
+ * Utility function to check if user can delete resources
  */
-const hasRole = (user, role) => {
-  return user.role === role;
+const canDelete = (user) => {
+  return user.role === ROLES.ADMIN;
 };
 
 /**
- * Utility function to check if user has any of the specified roles
+ * Utility function to check if user can access financial data
  */
-const hasAnyRole = (user, roles) => {
-  return roles.includes(user.role);
+const canAccessFinancialData = (user) => {
+  return user.role === ROLES.ADMIN;
 };
 
 /**
- * Middleware for conditional access based on request context
+ * Utility function to check if user can manage other users
  */
-const conditionalAccess = (conditionFn) => {
-  return [
-    authenticateToken,
-    async (req, res, next) => {
-      try {
-        const hasAccess = await conditionFn(req.user, req);
-        
-        if (!hasAccess) {
-          return res.status(403).json({
-            success: false,
-            message: 'Access denied based on current context'
-          });
-        }
-
-        next();
-      } catch (error) {
-        console.error('Conditional access error:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Error evaluating access conditions'
-        });
-      }
-    }
-  ];
+const canManageUsers = (user) => {
+  return user.role === ROLES.ADMIN;
 };
 
 module.exports = {
@@ -334,21 +300,21 @@ module.exports = {
   requireAdmin,
   requireAssistant,
   checkPermission,
-  checkPermissions,
-  checkAnyPermission,
   requireOwnershipOrAdmin,
-  conditionalAccess,
+  addOwnershipFilter,
+  restrictFinancialAccess,
   
   // Utility functions
   hasPermission,
-  hasRole,
-  hasAnyRole,
+  canDelete,
+  canAccessFinancialData,
+  canManageUsers,
   
   // Constants
   ROLES,
   PERMISSIONS,
   ROLE_PERMISSIONS,
   
-  // Direct access to internal functions for testing
+  // Direct access to internal functions
   authenticateToken
 };

@@ -1,9 +1,9 @@
 const express = require('express');
 const Customer = require('../models/Customer');
-const { auth, authorize } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const router = express.Router();
 
-router.get('/', auth, async (req, res) => {
+router.get('/', authenticate, async (req, res) => {
   try {
     const {
       page = 1,
@@ -68,7 +68,7 @@ router.get('/', auth, async (req, res) => {
 // @route   GET /api/customers/stats
 // @desc    Get customer statistics for dashboard
 // @access  Private (Admin & Assistant)
-router.get('/stats', auth, async (req, res) => {
+router.get('/stats', authenticate, async (req, res) => {
   try {
     // Get overall stats
     const stats = await Customer.getStats();
@@ -115,7 +115,7 @@ router.get('/stats', auth, async (req, res) => {
 // @route   GET /api/customers/:id
 // @desc    Get single customer by ID
 // @access  Private (Admin & Assistant)
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', authenticate, async (req, res) => {
   try {
     const customer = await Customer.findById(req.params.id)
       .populate('createdBy', 'firstName lastName username')
@@ -145,7 +145,7 @@ router.get('/:id', auth, async (req, res) => {
 // @route   POST /api/customers
 // @desc    Create new customer
 // @access  Private (Admin & Assistant)
-router.post('/', auth, async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const customerData = {
       ...req.body,
@@ -193,7 +193,7 @@ router.post('/', auth, async (req, res) => {
 // @route   PUT /api/customers/:id
 // @desc    Update customer
 // @access  Private (Admin & Assistant)
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', authenticate, async (req, res) => {
   try {
     const updateData = {
       ...req.body,
@@ -243,7 +243,7 @@ router.put('/:id', auth, async (req, res) => {
 // @route   DELETE /api/customers/:id
 // @desc    Delete customer (soft delete)
 // @access  Private (Admin only)
-router.delete('/:id', auth, authorize('admin'), async (req, res) => {
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const customer = await Customer.findByIdAndUpdate(
       req.params.id,

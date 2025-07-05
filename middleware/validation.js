@@ -1,9 +1,15 @@
+const { 
+  USER_ROLES, 
+  PERMISSIONS, 
+  FINANCIAL_FIELDS, 
+  VALIDATION_RULES, 
+  ERROR_MESSAGES,
+  AUDIT_LEVELS 
+} = require('../utils/constants');
+
 class ValidationMiddleware {
   constructor() {
     this.rateLimits = new Map();
-    this.existingEmails = new Set();
-    this.customerAssignments = new Map();
-    this.assistantList = new Set();
   }
 
   sanitize(input) {
@@ -43,8 +49,9 @@ class ValidationMiddleware {
   }
 
   validateUserRegistration(data, currentUserRole) {
-    if (currentUserRole !== 'admin') {
-      throw new Error('Only administrators can create assistant accounts');
+    // Only admins can create users
+    if (currentUserRole !== USER_ROLES.ADMIN) {
+      throw new Error(ERROR_MESSAGES.ADMIN_ONLY_OPERATION);
     }
     
     this.checkRateLimit(`registration_${data.email}`, 3, 10 * 60 * 1000);
@@ -52,58 +59,37 @@ class ValidationMiddleware {
     if (!data.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
       throw new Error('Valid email is required');
     }
-    if (this.existingEmails.has(data.email.toLowerCase())) {
-      throw new Error('Email already exists');
+    
+    // Enhanced password validation
+    if (!data.password || data.password.length < 8 || !/^(?=.*[a-zA-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/.test(data.password)) {
+      throw new Error('Password must contain letters, numbers, and special characters');
     }
-    if (!data.password || data.password.length < 8 || !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(data.password)) {
-      throw new Error('Password must be 8+ chars with uppercase, lowercase, and number');
-    }
+    
     if (!data.firstName || !data.lastName || data.firstName.length < 2 || data.lastName.length < 2) {
       throw new Error('First and last names are required (2+ characters)');
     }
     
-    const validated = {
+    if (!/^[a-zA-Z\s]+$/.test(data.firstName) || !/^[a-zA-Z\s]+$/.test(data.lastName)) {
+      throw new Error('Names can only contain letters and spaces');
+    }
+    
+    return {
       email: this.sanitize(data.email.toLowerCase().trim()),
       password: data.password,
       firstName: this.sanitize(data.firstName.trim()),
       lastName: this.sanitize(data.lastName.trim()),
-      role: 'assistant'
+      role: USER_ROLES.ASSISTANT
     };
-    
-    this.existingEmails.add(validated.email);
-    this.assistantList.add(validated.email);
-    
-    return validated;
   }
 
-  validateRoleAssignment(data, currentUserRole) {
-    if (currentUserRole !== 'admin') {
-      throw new Error('Only administrators can assign customers to assistants');
-    }
-    
-    if (!data.assistantId || !this.assistantList.has(data.assistantId)) {
-      throw new Error('Valid assistant ID is required');
-    }
-    if (!data.customerIds || !Array.isArray(data.customerIds) || data.customerIds.length === 0) {
-      throw new Error('At least one customer ID is required');
-    }
-    
-    const validated = {
-      assistantId: this.sanitize(data.assistantId),
-      customerIds: data.customerIds.map(id => this.sanitize(id.toString()))
-    };
-    
-    if (!this.customerAssignments.has(validated.assistantId)) {
-      this.customerAssignments.set(validated.assistantId, []);
-    }
-    this.customerAssignments.get(validated.assistantId).push(...validated.customerIds);
-    
-    return validated;
+  validateAssistant(data, currentUserRole) {
+    return this.validateUserRegistration(data, currentUserRole);
   }
 
   validateCustomer(data, currentUserRole, assistantId = null, isUpdate = false) {
     const validated = {};
     
+    // Basic validation
     if (!isUpdate) {
       if (!data.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
         throw new Error('Valid email is required');
@@ -120,32 +106,35 @@ class ValidationMiddleware {
     if (data.phone) validated.phone = this.sanitize(data.phone.replace(/\s/g, ''));
     if (data.company) validated.company = this.sanitize(data.company.trim());
     
-    if (currentUserRole === 'admin') {
+    // Financial data validation - ONLY admins can modify
+    if (currentUserRole === USER_ROLES.ADMIN) {
       if (data.creditLimit !== undefined) {
         const limit = parseFloat(data.creditLimit);
-        if (isNaN(limit) || limit < 0 || limit > 100000) {
-          throw new Error('Credit limit must be between 0 and 100,000');
+        if (isNaN(limit) || limit < 0 || limit > VALIDATION_RULES.MAX_CREDIT_LIMIT) {
+          throw new Error(`Credit limit must be between 0 and ${VALIDATION_RULES.MAX_CREDIT_LIMIT}`);
         }
         validated.creditLimit = limit;
       }
-      if (data.paymentTerms && ['net-30', 'net-60', 'net-90', 'immediate'].includes(data.paymentTerms)) {
+      if (data.paymentTerms && VALIDATION_RULES.PAYMENT_TERMS.includes(data.paymentTerms)) {
         validated.paymentTerms = data.paymentTerms;
       }
-    } else if (data.creditLimit !== undefined || data.paymentTerms !== undefined) {
-      throw new Error('Assistants cannot modify financial data');
+    } else {
+      // Check if assistant is trying to modify financial data
+      const financialFields = FINANCIAL_FIELDS.filter(field => data[field] !== undefined);
+      if (financialFields.length > 0) {
+        throw new Error(ERROR_MESSAGES.FINANCIAL_ACCESS_DENIED);
+      }
+    }
+    
+    // Add ownership for assistants
+    if (currentUserRole === USER_ROLES.ASSISTANT && !isUpdate) {
+      validated.createdBy = assistantId;
     }
     
     return validated;
   }
 
   validateOrder(data, currentUserRole, assistantId = null) {
-    if (currentUserRole === 'assistant' && data.customerId) {
-      const assignedCustomers = this.customerAssignments.get(assistantId) || [];
-      if (!assignedCustomers.includes(data.customerId.toString())) {
-        throw new Error('Access denied: Customer not assigned to this assistant');
-      }
-    }
-    
     if (!data.customerId) {
       throw new Error('Customer ID is required');
     }
@@ -159,7 +148,10 @@ class ValidationMiddleware {
       totalAmount: 0
     };
     
-    const maxPrice = currentUserRole === 'admin' ? 50000 : 10000;
+    // Role-based price limits
+    const maxPrice = currentUserRole === USER_ROLES.ADMIN ? 
+      VALIDATION_RULES.ADMIN_MAX_ITEM_PRICE : 
+      VALIDATION_RULES.ASSISTANT_MAX_ITEM_PRICE;
     
     data.items.forEach((item, index) => {
       if (!item.productId) throw new Error(`Item ${index + 1}: Product ID is required`);
@@ -167,8 +159,8 @@ class ValidationMiddleware {
       const quantity = parseInt(item.quantity);
       const price = parseFloat(item.price);
       
-      if (!quantity || quantity < 1 || quantity > 1000) {
-        throw new Error(`Item ${index + 1}: Quantity must be 1-1000`);
+      if (!quantity || quantity < 1 || quantity > VALIDATION_RULES.MAX_ITEM_QUANTITY) {
+        throw new Error(`Item ${index + 1}: Quantity must be 1-${VALIDATION_RULES.MAX_ITEM_QUANTITY}`);
       }
       if (isNaN(price) || price < 0 || price > maxPrice) {
         throw new Error(`Item ${index + 1}: Invalid price or exceeds ${maxPrice} limit`);
@@ -184,40 +176,107 @@ class ValidationMiddleware {
       validated.totalAmount += subtotal;
     });
     
-    const maxOrderValue = currentUserRole === 'admin' ? 100000 : 25000;
+    // Role-based order value limits
+    const maxOrderValue = currentUserRole === USER_ROLES.ADMIN ? 
+      VALIDATION_RULES.ADMIN_MAX_ORDER_VALUE : 
+      VALIDATION_RULES.ASSISTANT_MAX_ORDER_VALUE;
+    
     if (validated.totalAmount > maxOrderValue) {
       throw new Error(`Order total exceeds ${maxOrderValue} limit for ${currentUserRole}s`);
     }
     
     if (data.notes) {
-      const maxLength = currentUserRole === 'admin' ? 1000 : 500;
+      const maxLength = currentUserRole === USER_ROLES.ADMIN ? 1000 : 500;
       if (data.notes.length > maxLength) {
         throw new Error(`Notes exceed ${maxLength} character limit`);
       }
       validated.notes = this.sanitize(data.notes.trim());
     }
     
+    // Only admins can set priority
     if (data.priority) {
-      if (currentUserRole !== 'admin') {
-        throw new Error('Only administrators can set order priority');
+      if (currentUserRole !== USER_ROLES.ADMIN) {
+        throw new Error(ERROR_MESSAGES.ADMIN_ONLY_OPERATION);
       }
       if (['low', 'normal', 'high', 'urgent'].includes(data.priority)) {
         validated.priority = data.priority;
       }
     }
     
+    // Add ownership for assistants
+    if (currentUserRole === USER_ROLES.ASSISTANT) {
+      validated.createdBy = assistantId;
+    }
+    
     return validated;
   }
 
-  validateDataOwnership(resourceType, resourceId, currentUserRole, assistantId) {
-    if (currentUserRole === 'admin') return true;
+  // FIXED: Proper data ownership validation
+  validateDataOwnership(resourceType, resourceId, currentUserRole, assistantId, resourceData = null) {
+    // Admins can access everything
+    if (currentUserRole === USER_ROLES.ADMIN) return true;
     
-    if (currentUserRole === 'assistant' && (resourceType === 'customer' || resourceType === 'order')) {
-      const assignedCustomers = this.customerAssignments.get(assistantId) || [];
-      return assignedCustomers.includes(resourceId.toString());
+    // Assistants can only access their own data
+    if (currentUserRole === USER_ROLES.ASSISTANT) {
+      if (resourceType === 'customer' || resourceType === 'order') {
+        // If we have resource data, check ownership
+        if (resourceData && resourceData.createdBy !== assistantId) {
+          throw new Error(ERROR_MESSAGES.OWNERSHIP_VIOLATION);
+        }
+        return true;
+      }
+      
+      // Assistants cannot access users or financial data
+      if (resourceType === 'user' || resourceType === 'financial_data') {
+        throw new Error(ERROR_MESSAGES.ACCESS_DENIED);
+      }
     }
     
     return false;
+  }
+
+  // FIXED: Proper delete permissions
+  validateDeletePermission(resourceType, currentUserRole) {
+    if (currentUserRole === USER_ROLES.ADMIN) return true;
+    
+    // Assistants cannot delete anything
+    if (currentUserRole === USER_ROLES.ASSISTANT) {
+      throw new Error(ERROR_MESSAGES.DELETE_DENIED);
+    }
+    
+    return false;
+  }
+
+  // Check if user can access financial data
+  validateFinancialAccess(currentUserRole) {
+    if (currentUserRole === USER_ROLES.ASSISTANT) {
+      throw new Error(ERROR_MESSAGES.FINANCIAL_ACCESS_DENIED);
+    }
+    return currentUserRole === USER_ROLES.ADMIN;
+  }
+
+  // Filter financial fields from response data
+  filterFinancialData(data, currentUserRole) {
+    if (currentUserRole === USER_ROLES.ADMIN) {
+      return data; // Admins see everything
+    }
+    
+    if (Array.isArray(data)) {
+      return data.map(item => this.removeFinancialFields(item));
+    } else {
+      return this.removeFinancialFields(data);
+    }
+  }
+
+  removeFinancialFields(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    
+    const filtered = { ...obj };
+    FINANCIAL_FIELDS.forEach(field => {
+      delete filtered[field];
+    });
+    
+    return filtered;
   }
 
   validateFileUpload(files, maxSize = 10 * 1024 * 1024, allowedTypes = ['image/jpeg', 'image/png', 'application/pdf']) {
@@ -238,7 +297,7 @@ class ValidationMiddleware {
   validateRequest(validationType) {
     return (req, res, next) => {
       try {
-        const userRole = req.user?.role || 'assistant';
+        const userRole = req.user?.role || USER_ROLES.ASSISTANT;
         const assistantId = req.user?.id;
         let validatedData;
         
@@ -249,8 +308,8 @@ class ValidationMiddleware {
           case 'userRegistration':
             validatedData = this.validateUserRegistration(req.body, userRole);
             break;
-          case 'roleAssignment':
-            validatedData = this.validateRoleAssignment(req.body, userRole);
+          case 'assistant':
+            validatedData = this.validateAssistant(req.body, userRole);
             break;
           case 'customer':
             validatedData = this.validateCustomer(req.body, userRole, assistantId, req.method === 'PUT');
@@ -269,11 +328,43 @@ class ValidationMiddleware {
         next();
         
       } catch (error) {
+        // Log security violations
+        if (error.message.includes('ownership') || error.message.includes('financial')) {
+          console.warn('Security Violation:', {
+            userId: req.user?.id,
+            role: req.user?.role,
+            action: validationType,
+            error: error.message,
+            ip: req.ip,
+            timestamp: new Date()
+          });
+        }
+        
         res.status(400).json({
-          error: userRole === 'admin' ? error.message : 'Invalid data provided',
+          error: userRole === USER_ROLES.ADMIN ? error.message : 'Access denied or invalid data',
           code: 'VALIDATION_ERROR'
         });
       }
+    };
+  }
+
+  // Middleware to add ownership filter for assistants
+  addOwnershipFilter() {
+    return (req, res, next) => {
+      if (req.user?.role === USER_ROLES.ASSISTANT) {
+        req.ownershipFilter = { createdBy: req.user.id };
+      }
+      next();
+    };
+  }
+
+  // Middleware to add financial data filtering
+  addFinancialDataFilter() {
+    return (req, res, next) => {
+      if (req.user?.role === USER_ROLES.ASSISTANT) {
+        req.filterFinancialData = true;
+      }
+      next();
     };
   }
 }
