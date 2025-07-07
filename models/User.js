@@ -1,5 +1,3 @@
-// models/User.js - Fixed version (Clean up Mongoose warnings)
-
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
