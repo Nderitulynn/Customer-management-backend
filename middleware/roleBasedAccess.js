@@ -107,12 +107,13 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
-    // Attach user info to request
+    // Attach user info to request - FIXED: Using exact field names from User model
     req.user = {
       id: user._id,
-      username: user.username,
+      firstName: user.firstName,  // ✅ Matches User model
+      lastName: user.lastName,    // ✅ Matches User model
       email: user.email,
-      fullName: user.fullName,
+      fullName: user.fullName,    // ✅ Virtual field from User model
       role: user.role,
       permissions: ROLE_PERMISSIONS[user.role] || []
     };
