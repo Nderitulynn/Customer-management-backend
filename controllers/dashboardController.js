@@ -1,7 +1,5 @@
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
-const Task = require('../models/Task');
-const Payment = require('../models/Payment');
 
 // Cache for 5 minutes
 const CACHE_DURATION = 5 * 60 * 1000;
@@ -18,16 +16,14 @@ const dashboardController = {
         return res.json(cached.data);
       }
 
-      const [revenueData, profitData, customerGrowth, orderVolumes] = await Promise.all([
+      const [revenueData, customerGrowth, orderVolumes] = await Promise.all([
         getRevenueData(),
-        getProfitData(),
         getCustomerGrowth(),
         getOrderVolumes()
       ]);
 
       const data = {
         revenue: revenueData,
-        profit: profitData,
         customerGrowth,
         orderVolumes
       };
@@ -35,66 +31,67 @@ const dashboardController = {
       cache.set(cacheKey, { data, timestamp: Date.now() });
       res.json(data);
     } catch (error) {
+      console.error('Admin dashboard error:', error);
       res.status(500).json({ error: error.message });
     }
   },
 
-  // Assistant Dashboard - FIXED
+  // Assistant Dashboard - Simplified
   async getAssistantDashboard(req, res) {
     try {
       const assistantId = req.user.id;
       
       // Get assigned customers for this assistant
       const assignedCustomers = await Customer.find({ assignedTo: assistantId })
-        .select('_id fullName email phone status');
+        .select('_id fullName email phone status')
+        .limit(50);
       
       const customerIds = assignedCustomers.map(customer => customer._id);
       
-      const [assignedTasks, recentOrders, notifications, customerStats] = await Promise.all([
-        Task.find({ assignedTo: assistantId, status: { $in: ['pending', 'in_progress'] } })
-          .sort({ createdAt: -1 })
-          .limit(10),
+      const [recentOrders, customerStats] = await Promise.all([
         Order.find({ customerId: { $in: customerIds } })
           .sort({ createdAt: -1 })
-          .limit(5)
+          .limit(10)
           .populate('customerId', 'fullName email'),
-        getNotifications(assistantId),
         getAssistantStats(assistantId, customerIds)
       ]);
 
       res.json({
-        assignedTasks,
         recentOrders,
-        notifications,
         assignedCustomers,
-        stats: customerStats
+        stats: customerStats,
+        notifications: [] // Empty for now
       });
     } catch (error) {
+      console.error('Assistant dashboard error:', error);
       res.status(500).json({ error: error.message });
     }
   },
 
-  // Quick Stats - FIXED for role-based access
+  // Quick Stats - Simplified
   async getQuickStats(req, res) {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      let todayOrders, activeCustomers, pendingPayments;
+      let todayOrders, activeCustomers, totalRevenue;
 
       if (req.user.role === 'admin') {
         // Admin sees all data
-        [todayOrders, activeCustomers, pendingPayments] = await Promise.all([
+        [todayOrders, activeCustomers, totalRevenue] = await Promise.all([
           Order.countDocuments({ createdAt: { $gte: today } }),
           Customer.countDocuments({ status: 'active' }),
-          Payment.countDocuments({ status: 'pending' })
+          Order.aggregate([
+            { $match: { status: 'completed' } },
+            { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+          ]).then(result => result[0]?.total || 0)
         ]);
       } else {
         // Assistant sees only assigned customers' data
         const assignedCustomers = await Customer.find({ assignedTo: req.user.id }).select('_id');
         const customerIds = assignedCustomers.map(customer => customer._id);
 
-        [todayOrders, activeCustomers, pendingPayments] = await Promise.all([
+        [todayOrders, activeCustomers, totalRevenue] = await Promise.all([
           Order.countDocuments({ 
             customerId: { $in: customerIds }, 
             createdAt: { $gte: today } 
@@ -103,24 +100,25 @@ const dashboardController = {
             assignedTo: req.user.id, 
             status: 'active' 
           }),
-          Payment.countDocuments({ 
-            customerId: { $in: customerIds }, 
-            status: 'pending' 
-          })
+          Order.aggregate([
+            { $match: { customerId: { $in: customerIds }, status: 'completed' } },
+            { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+          ]).then(result => result[0]?.total || 0)
         ]);
       }
 
       res.json({
         todayOrders,
         activeCustomers,
-        pendingPayments
+        totalRevenue
       });
     } catch (error) {
+      console.error('Quick stats error:', error);
       res.status(500).json({ error: error.message });
     }
   },
 
-  // Recent Activity Feed - FIXED
+  // Recent Activity Feed
   async getRecentActivity(req, res) {
     try {
       const userType = req.user.role;
@@ -148,11 +146,12 @@ const dashboardController = {
 
       res.json(activities);
     } catch (error) {
+      console.error('Recent activity error:', error);
       res.status(500).json({ error: error.message });
     }
   },
 
-  // NEW: Get assigned customers for assistant
+  // Get assigned customers for assistant
   async getAssignedCustomers(req, res) {
     try {
       if (req.user.role !== 'assistant') {
@@ -160,16 +159,17 @@ const dashboardController = {
       }
 
       const customers = await Customer.find({ assignedTo: req.user.id })
-        .select('fullName email phone status createdAt lastContactDate')
+        .select('fullName email phone status createdAt')
         .sort({ createdAt: -1 });
 
       res.json(customers);
     } catch (error) {
+      console.error('Get assigned customers error:', error);
       res.status(500).json({ error: error.message });
     }
   },
 
-  // NEW: Get customer details for assistant
+  // Get customer details for assistant
   async getCustomerDetails(req, res) {
     try {
       const customerId = req.params.id;
@@ -199,6 +199,7 @@ const dashboardController = {
         orders
       });
     } catch (error) {
+      console.error('Get customer details error:', error);
       res.status(500).json({ error: error.message });
     }
   }
@@ -215,22 +216,6 @@ async function getRevenueData() {
       $group: {
         _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
         revenue: { $sum: "$totalAmount" }
-      }
-    },
-    { $sort: { _id: 1 } }
-  ]);
-}
-
-async function getProfitData() {
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-  return await Order.aggregate([
-    { $match: { createdAt: { $gte: thirtyDaysAgo }, status: 'completed' } },
-    {
-      $group: {
-        _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-        profit: { $sum: { $subtract: ["$totalAmount", "$costAmount"] } }
       }
     },
     { $sort: { _id: 1 } }
@@ -269,24 +254,13 @@ async function getOrderVolumes() {
   ]);
 }
 
-async function getNotifications(assistantId) {
-  return await Task.find({ 
-    assignedTo: assistantId, 
-    status: 'pending',
-    priority: 'high'
-  })
-  .sort({ createdAt: -1 })
-  .limit(5)
-  .select('title description createdAt');
-}
-
-// NEW: Get assistant-specific stats
+// Get assistant-specific stats
 async function getAssistantStats(assistantId, customerIds) {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const [totalCustomers, activeOrders, completedOrdersToday, pendingTasks] = await Promise.all([
+    const [totalCustomers, activeOrders, completedOrdersToday] = await Promise.all([
       Customer.countDocuments({ assignedTo: assistantId }),
       Order.countDocuments({ 
         customerId: { $in: customerIds }, 
@@ -296,10 +270,6 @@ async function getAssistantStats(assistantId, customerIds) {
         customerId: { $in: customerIds }, 
         status: 'completed',
         createdAt: { $gte: today }
-      }),
-      Task.countDocuments({ 
-        assignedTo: assistantId, 
-        status: { $in: ['pending', 'in_progress'] } 
       })
     ]);
 
@@ -307,7 +277,7 @@ async function getAssistantStats(assistantId, customerIds) {
       totalCustomers,
       activeOrders,
       completedOrdersToday,
-      pendingTasks
+      pendingTasks: 0 // Will be 0 until Task model is implemented
     };
   } catch (error) {
     console.error('Error getting assistant stats:', error);

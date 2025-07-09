@@ -7,6 +7,15 @@ const ValidationMiddleware = require('../middleware/validation'); // Import the 
 // Create an instance of ValidationMiddleware
 const validator = new ValidationMiddleware();
 
+// ===== BASE USERS ROUTE =====
+
+// Get all users (admin only) - This handles /api/users
+router.get('/', 
+  authenticate,
+  authorize(['admin']),
+  userController.getAllUsers
+);
+
 // ===== ADMIN ROUTES =====
 
 // Register admin (one-time setup - no auth required)

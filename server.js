@@ -16,6 +16,7 @@ const { jwtStrategy } = require('./config/jwt');
 const authRoutes = require('./routes/auth');
 const customerRoutes = require('./routes/customers');
 const userRoutes = require('./routes/users');
+const dashboardRoutes = require('./routes/dashboard');
 
 // Import middleware - FIXED: Import from correct path
 const { authenticate } = require('./middleware/auth');
@@ -108,6 +109,7 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+
 // Data sanitization against NoSQL query injection
 app.use(mongoSanitize());
 
@@ -139,6 +141,9 @@ app.use('/api/customers', authenticate, customerRoutes);
 
 // Protected user routes
 app.use('/api/users', userRoutes);
+
+//Protected dashboard routes
+app.use('/api/dashboard', authenticate, dashboardRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {

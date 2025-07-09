@@ -10,67 +10,64 @@ const ROLES = {
 // Define permissions based on your actual requirements
 const PERMISSIONS = {
   // Customer management
-  CREATE_CUSTOMERS: 'create_customers',
-  VIEW_CUSTOMERS: 'view_customers',
-  UPDATE_CUSTOMERS: 'update_customers',
-  DELETE_CUSTOMERS: 'delete_customers',
+  CREATE_CUSTOMER: 'create_customer',
+  READ_CUSTOMER: 'read_customer',
+  UPDATE_CUSTOMER: 'update_customer',
+  DELETE_CUSTOMER: 'delete_customer',
   
   // Order management
-  CREATE_ORDERS: 'create_orders',
-  VIEW_ORDERS: 'view_orders',
-  UPDATE_ORDERS: 'update_orders',
-  DELETE_ORDERS: 'delete_orders',
+  CREATE_ORDER: 'create_order',
+  READ_ORDER: 'read_order',
+  UPDATE_ORDER: 'update_order',
+  DELETE_ORDER: 'delete_order',
   
-  // User management (only admins)
-  CREATE_USERS: 'create_users',
-  VIEW_USERS: 'view_users',
-  UPDATE_USERS: 'update_users',
-  DELETE_USERS: 'delete_users',
+  // User management
+  CREATE_USER: 'create_user',
+  READ_USER: 'read_user',
+  UPDATE_USER: 'update_user',
+  DELETE_USER: 'delete_user',
   
-  // Financial data (only admins)
-  VIEW_FINANCIAL_DATA: 'view_financial_data',
+  // Financial data
+  READ_FINANCIAL: 'read_financial',
   
-  // System operations
-  VIEW_REPORTS: 'view_reports',
-  EXPORT_DATA: 'export_data'
+  // System administration
+  ADMIN_DASHBOARD: 'admin_dashboard',
+  ASSISTANT_DASHBOARD: 'assistant_dashboard'
 };
 
-// Role-permission mapping that matches your requirements
+// Role-permission mapping
 const ROLE_PERMISSIONS = {
   [ROLES.ADMIN]: [
-    // Full access to everything
-    ...Object.values(PERMISSIONS)
+    PERMISSIONS.CREATE_CUSTOMER,
+    PERMISSIONS.READ_CUSTOMER,
+    PERMISSIONS.UPDATE_CUSTOMER,
+    PERMISSIONS.DELETE_CUSTOMER,
+    PERMISSIONS.CREATE_ORDER,
+    PERMISSIONS.READ_ORDER,
+    PERMISSIONS.UPDATE_ORDER,
+    PERMISSIONS.DELETE_ORDER,
+    PERMISSIONS.CREATE_USER,
+    PERMISSIONS.READ_USER,
+    PERMISSIONS.UPDATE_USER,
+    PERMISSIONS.DELETE_USER,
+    PERMISSIONS.READ_FINANCIAL,
+    PERMISSIONS.ADMIN_DASHBOARD
   ],
   [ROLES.ASSISTANT]: [
-    // Limited access based on your requirements:
-    // - Can create/update customers but NOT delete
-    PERMISSIONS.CREATE_CUSTOMERS,
-    PERMISSIONS.VIEW_CUSTOMERS,
-    PERMISSIONS.UPDATE_CUSTOMERS,
-    // NOTE: NO DELETE_CUSTOMERS permission
-    
-    // - Can create/update orders but NOT delete
-    PERMISSIONS.CREATE_ORDERS,
-    PERMISSIONS.VIEW_ORDERS,
-    PERMISSIONS.UPDATE_ORDERS,
-    // NOTE: NO DELETE_ORDERS permission
-    
-    // - Can view reports
-    PERMISSIONS.VIEW_REPORTS,
-    
-    // NOTE: NO user management permissions
-    // NOTE: NO financial data permissions
-    // NOTE: NO system configuration permissions
+    PERMISSIONS.READ_CUSTOMER,
+    PERMISSIONS.UPDATE_CUSTOMER,
+    PERMISSIONS.CREATE_ORDER,
+    PERMISSIONS.READ_ORDER,
+    PERMISSIONS.UPDATE_ORDER,
+    PERMISSIONS.ASSISTANT_DASHBOARD
   ]
 };
 
-/**
- * Middleware to verify JWT token and extract user information
- */
+// Authentication middleware
 const authenticateToken = async (req, res, next) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
       return res.status(401).json({
@@ -79,23 +76,40 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
-    // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+    // Ensure JWT_SECRET is provided
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      console.error('JWT_SECRET is not configured');
+      return res.status(500).json({
+        success: false,
+        message: 'Server configuration error'
+      });
+    }
+
+    const decoded = jwt.verify(token, jwtSecret);
     
-    // Fetch user from database to get current role and status
-    const user = await User.findById(decoded.userId).select('-password -refreshToken');
+    // Handle both 'id' and 'userId' for backward compatibility
+    const userId = decoded.id || decoded.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token format'
+      });
+    }
+    
+    const user = await User.findById(userId).select('-password -refreshToken');
     
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: 'User not found'
+        message: 'Invalid token - user not found'
       });
     }
 
     if (!user.isActive) {
-      return res.status(403).json({
+      return res.status(401).json({
         success: false,
-        message: 'Account has been deactivated'
+        message: 'Account deactivated'
       });
     }
 
@@ -107,25 +121,13 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
-    // Attach user info to request - FIXED: Using exact field names from User model
-    req.user = {
-      id: user._id,
-      firstName: user.firstName,  // ✅ Matches User model
-      lastName: user.lastName,    // ✅ Matches User model
-      email: user.email,
-      fullName: user.fullName,    // ✅ Virtual field from User model
-      role: user.role,
-      permissions: ROLE_PERMISSIONS[user.role] || []
-    };
+    // Attach user and permissions to request
+    req.user = user;
+    req.user.permissions = ROLE_PERMISSIONS[user.role] || [];
 
     next();
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid token'
-      });
-    }
+    console.error('Authentication error:', error);
     
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({
@@ -133,8 +135,13 @@ const authenticateToken = async (req, res, next) => {
         message: 'Token expired'
       });
     }
-
-    console.error('Authentication error:', error);
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token'
+      });
+    }
     
     return res.status(500).json({
       success: false,
@@ -143,179 +150,196 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-/**
- * Middleware to require authentication
- */
-const requireAuth = () => {
-  return authenticateToken;
-};
-
-/**
- * Middleware to require admin role
- */
-const requireAdmin = () => {
-  return [
-    authenticateToken,
-    (req, res, next) => {
-      if (req.user.role !== ROLES.ADMIN) {
-        return res.status(403).json({
-          success: false,
-          message: 'Admin access required'
-        });
-      }
-      next();
+// Role-based access control middleware
+const requireRole = (roles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
     }
-  ];
+
+    const userRole = req.user.role;
+    const allowedRoles = Array.isArray(roles) ? roles : [roles];
+
+    if (!allowedRoles.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied. Required role(s): ${allowedRoles.join(', ')}`
+      });
+    }
+
+    next();
+  };
 };
 
-/**
- * Middleware to require assistant role or admin (both roles allowed)
- */
-const requireAssistant = () => {
-  return [
-    authenticateToken,
-    (req, res, next) => {
-      const allowedRoles = [ROLES.ADMIN, ROLES.ASSISTANT];
+// Permission-based access control middleware
+const requirePermission = (permission) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    const userPermissions = req.user.permissions || [];
+    
+    if (!userPermissions.includes(permission)) {
+      return res.status(403).json({
+        success: false,
+        message: `Insufficient permissions. Required: ${permission}`
+      });
+    }
+
+    next();
+  };
+};
+
+// Multiple permissions middleware
+const requirePermissions = (permissions) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    const userPermissions = req.user.permissions || [];
+    const requiredPermissions = Array.isArray(permissions) ? permissions : [permissions];
+    
+    const hasAllPermissions = requiredPermissions.every(permission => 
+      userPermissions.includes(permission)
+    );
+    
+    if (!hasAllPermissions) {
+      return res.status(403).json({
+        success: false,
+        message: `Insufficient permissions. Required: ${requiredPermissions.join(', ')}`
+      });
+    }
+
+    next();
+  };
+};
+
+// Specific role middleware
+const requireAdmin = () => requireRole(ROLES.ADMIN);
+const requireAssistant = () => requireRole(ROLES.ASSISTANT);
+const requireAdminOrAssistant = () => requireRole([ROLES.ADMIN, ROLES.ASSISTANT]);
+
+// Resource ownership middleware for assistants
+const requireOwnership = (resourceKey = 'id', resourceModel = null) => {
+  return async (req, res, next) => {
+    try {
+      const user = req.user;
       
-      if (!allowedRoles.includes(req.user.role)) {
-        return res.status(403).json({
-          success: false,
-          message: 'Assistant or Admin access required'
-        });
+      // Admins can access all resources
+      if (user.role === ROLES.ADMIN) {
+        return next();
       }
-      next();
-    }
-  ];
-};
-
-/**
- * Middleware to check specific permission
- */
-const checkPermission = (requiredPermission) => {
-  return [
-    authenticateToken,
-    (req, res, next) => {
-      if (!req.user.permissions.includes(requiredPermission)) {
-        return res.status(403).json({
-          success: false,
-          message: `Permission required: ${requiredPermission}`
-        });
-      }
-      next();
-    }
-  ];
-};
-
-/**
- * Middleware for resource ownership check
- * CRITICAL: Assistants can only access their own customers/orders
- */
-const requireOwnershipOrAdmin = (getResourceOwnerId) => {
-  return [
-    authenticateToken,
-    async (req, res, next) => {
-      try {
-        // Admin can access anything
-        if (req.user.role === ROLES.ADMIN) {
-          return next();
+      
+      // For assistants, check ownership
+      if (user.role === ROLES.ASSISTANT) {
+        const resourceId = req.params[resourceKey];
+        
+        if (!resourceId) {
+          return res.status(400).json({
+            success: false,
+            message: 'Resource ID is required'
+          });
         }
-
-        // For assistants, verify they own the resource
-        if (req.user.role === ROLES.ASSISTANT) {
-          const ownerId = await getResourceOwnerId(req);
+        
+        // If a resource model is provided, check ownership
+        if (resourceModel) {
+          const Resource = require(`../models/${resourceModel}`);
+          const resource = await Resource.findById(resourceId);
           
-          if (req.user.id.toString() !== ownerId.toString()) {
+          if (!resource) {
+            return res.status(404).json({
+              success: false,
+              message: 'Resource not found'
+            });
+          }
+          
+          // Check if resource belongs to the user
+          // Adjust the ownership field based on your data model
+          if (resource.createdBy && resource.createdBy.toString() !== user._id.toString()) {
             return res.status(403).json({
               success: false,
-              message: 'Access denied: You can only access your own customers/orders'
+              message: 'Access denied - resource not owned by user'
             });
           }
         }
-
-        next();
-      } catch (error) {
-        console.error('Ownership check error:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Error checking resource ownership'
-        });
+        
+        return next();
       }
+      
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    } catch (error) {
+      console.error('Ownership check error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error checking resource ownership'
+      });
     }
-  ];
+  };
 };
 
-/**
- * Middleware to filter database queries for assistants
- * CRITICAL: Ensures assistants only see their own data
- */
-const addOwnershipFilter = (req, res, next) => {
-  if (req.user.role === ROLES.ASSISTANT) {
-    // Add ownership filter to database queries
-    req.ownershipFilter = { createdBy: req.user.id };
+// Financial data access middleware
+const requireFinancialAccess = () => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    // Only admins can access financial data
+    if (req.user.role !== ROLES.ADMIN) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access to financial data restricted to administrators'
+      });
+    }
+
+    next();
+  };
+};
+
+// Validate JWT Secret on startup
+const validateJWTSecret = () => {
+  if (!process.env.JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is not set');
+    process.exit(1);
   }
-  next();
-};
-
-/**
- * Middleware to prevent financial data access for assistants
- */
-const restrictFinancialAccess = (req, res, next) => {
-  if (req.user.role === ROLES.ASSISTANT) {
-    // Flag to filter financial data from responses
-    req.restrictFinancialData = true;
+  
+  if (process.env.JWT_SECRET.length < 32) {
+    console.warn('WARNING: JWT_SECRET should be at least 32 characters long');
   }
-  next();
 };
 
-/**
- * Utility function to check if user has permission
- */
-const hasPermission = (user, permission) => {
-  return user.permissions && user.permissions.includes(permission);
-};
-
-/**
- * Utility function to check if user can delete resources
- */
-const canDelete = (user) => {
-  return user.role === ROLES.ADMIN;
-};
-
-/**
- * Utility function to check if user can access financial data
- */
-const canAccessFinancialData = (user) => {
-  return user.role === ROLES.ADMIN;
-};
-
-/**
- * Utility function to check if user can manage other users
- */
-const canManageUsers = (user) => {
-  return user.role === ROLES.ADMIN;
-};
+// Optional: Call this when your server starts
+// validateJWTSecret();
 
 module.exports = {
-  // Core middleware functions
-  requireAuth,
-  requireAdmin,
-  requireAssistant,
-  checkPermission,
-  requireOwnershipOrAdmin,
-  addOwnershipFilter,
-  restrictFinancialAccess,
-  
-  // Utility functions
-  hasPermission,
-  canDelete,
-  canAccessFinancialData,
-  canManageUsers,
-  
-  // Constants
   ROLES,
   PERMISSIONS,
   ROLE_PERMISSIONS,
-  
-  // Direct access to internal functions
-  authenticateToken
+  authenticateToken,
+  requireRole,
+  requirePermission,
+  requirePermissions,
+  requireAdmin,
+  requireAssistant,
+  requireAdminOrAssistant,
+  requireOwnership,
+  requireFinancialAccess,
+  validateJWTSecret
 };

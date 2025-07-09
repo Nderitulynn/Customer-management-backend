@@ -47,6 +47,37 @@ const registerAdmin = async (req, res) => {
   }
 };
 
+// ===== GET ALL USERS (Admin Only) =====
+const getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select('-password')
+      .sort({ createdAt: -1 });
+
+    // Separate users by role for easier frontend consumption
+    const usersByRole = {
+      admins: users.filter(user => user.role === 'admin'),
+      assistants: users.filter(user => user.role === 'assistant')
+    };
+
+    res.json({
+      success: true,
+      data: {
+        users: users,
+        usersByRole: usersByRole,
+        totalUsers: users.length,
+        totalAdmins: usersByRole.admins.length,
+        totalAssistants: usersByRole.assistants.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+};
+
 // ===== ASSISTANT CREATION & MANAGEMENT (Admin Only) =====
 const createAssistant = async (req, res) => {
   try {
@@ -397,6 +428,7 @@ const reassignCustomers = async (req, res) => {
 // ===== EXPORTS =====
 module.exports = {
   registerAdmin,
+  getAllUsers,
   createAssistant,
   getAllAssistants,
   getAssistantDetails,
