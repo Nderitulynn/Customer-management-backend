@@ -52,6 +52,13 @@ router.post('/login', loginValidation, login);
 router.post('/logout', authenticate, logout);
 router.post('/refresh', authenticate, refreshToken);
 router.get('/me', authenticate, requireActiveUser(), getCurrentUser);
+router.post('/verify-token', authenticate, (req, res) => {
+  res.json({
+    success: true,
+    valid: true,
+    user: req.user
+  });
+});
 router.put('/profile', authenticate, requireActiveUser(), updateProfile);
 router.put('/password', authenticate, requireActiveUser(), changePassword);
 
