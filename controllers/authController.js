@@ -55,11 +55,13 @@ const register = async (req, res) => {
     // Generate token
     const token = generateToken(user);
 
-    res.status(201).json(createSuccessResponse(
-      'User registered successfully',
-      { user: user.toJSON() },
-      token
-    ));
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      user: user.toJSON(),
+      token,
+      permissions: user.permissions || []
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -109,11 +111,14 @@ const login = async (req, res) => {
     // Generate token
     const token = generateToken(user);
 
-    res.json(createSuccessResponse(
-      'Login successful',
-      { user: user.toJSON() },
-      token
-    ));
+    // Return response format that matches frontend expectations
+    res.json({
+      success: true,
+      message: 'Login successful',
+      user: user.toJSON(),
+      token,
+      permissions: user.permissions || []
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -158,7 +163,12 @@ const updateProfile = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    res.json(createSuccessResponse('Profile updated successfully', { user }));
+    // Return response format that matches frontend expectations
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: user.toJSON()
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -206,7 +216,12 @@ const logout = async (req, res) => {
 const refreshToken = async (req, res) => {
   try {
     const token = generateToken(req.user);
-    res.json(createSuccessResponse('Token refreshed successfully', null, token));
+    res.json({
+      success: true,
+      message: 'Token refreshed successfully',
+      token,
+      user: req.user
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
