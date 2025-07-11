@@ -124,6 +124,46 @@ const login = async (req, res) => {
   }
 };
 
+// Verify token - NEW METHOD ADDED
+const verifyToken = async (req, res) => {
+  try {
+    // The authMiddleware has already verified the token and attached user to req.user
+    // So if we reach here, the token is valid
+    
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        valid: false, 
+        error: 'User not found' 
+      });
+    }
+
+    // Check if user is still active
+    if (!user.isActive) {
+      return res.status(403).json({ 
+        success: false, 
+        valid: false, 
+        error: 'Account is inactive' 
+      });
+    }
+
+    res.json({
+      success: true,
+      valid: true,
+      user: user.toJSON(),
+      message: 'Token is valid'
+    });
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(500).json({ 
+      success: false, 
+      valid: false, 
+      error: error.message 
+    });
+  }
+};
+
 // Get current user
 const getCurrentUser = async (req, res) => {
   try {
@@ -230,6 +270,7 @@ const refreshToken = async (req, res) => {
 module.exports = {
   register,
   login,
+  verifyToken,  // NEW METHOD EXPORTED
   getCurrentUser,
   updateProfile,
   changePassword,
