@@ -73,7 +73,12 @@ const login = async (req, res) => {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
+
+    // Validate role if provided
+    if (role && !['admin', 'assistant'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role specified' });
+    }
 
     // Find user by email
     const user = await User.findOne({ email });
@@ -90,6 +95,11 @@ const login = async (req, res) => {
     // Check if user is active
     if (!user.isActive) {
       return res.status(403).json({ error: 'Account is inactive' });
+    }
+
+    // Verify user's role matches the requested role (if role is specified)
+    if (role && user.role !== role) {
+      return res.status(403).json({ error: `Access denied. You don't have ${role} privileges` });
     }
 
     // Update last login
