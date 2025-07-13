@@ -28,14 +28,27 @@ class CustomerController {
     }
   }
 
-  // Get all customers with pagination and filters
+  // Get all customers with pagination, filters, and role-based filtering
   async getCustomers(req, res) {
     try {
-      const { page = 1, limit = 10, search, name, email, phone } = req.query;
+      const { page = 1, limit = 10, search, name, email, phone, assignedTo } = req.query;
       const skip = (page - 1) * limit;
       
       // Build filter object
       const filter = {};
+      
+      // Role-based filtering
+      if (checkRole(req.user, 'admin')) {
+        // Admin can see all customers
+        if (assignedTo) filter.assignedTo = assignedTo;
+      } else {
+        // Assistants can only see unassigned customers
+        filter.$or = [
+          { assignedTo: { $exists: false } },
+          { assignedTo: null }
+        ];
+      }
+      
       if (search) {
         filter.$or = [
           { name: { $regex: search, $options: 'i' } },
@@ -49,6 +62,7 @@ class CustomerController {
 
       const customers = await Customer.find(filter)
         .select('-__v')
+        .populate('assignedTo', 'name email')
         .limit(limit * 1)
         .skip(skip)
         .sort({ createdAt: -1 });
@@ -57,7 +71,10 @@ class CustomerController {
 
       res.json({
         success: true,
-        data: customers,
+        data: customers.map(customer => ({
+          ...customer.toObject(),
+          assignmentStatus: customer.assignedTo ? 'assigned' : 'unassigned'
+        })),
         pagination: {
           current: page,
           pages: Math.ceil(total / limit),
@@ -72,21 +89,37 @@ class CustomerController {
     }
   }
 
-  // Get customer by ID
+  // Get customer by ID with role-based access
   async getCustomerById(req, res) {
     try {
-      const customer = await Customer.findById(req.params.id).populate('orders');
+      const filter = { _id: req.params.id };
+      
+      // Role-based filtering
+      if (!checkRole(req.user, 'admin')) {
+        // Assistants can only see unassigned customers
+        filter.$or = [
+          { assignedTo: { $exists: false } },
+          { assignedTo: null }
+        ];
+      }
+      
+      const customer = await Customer.findOne(filter)
+        .populate('orders')
+        .populate('assignedTo', 'name email');
       
       if (!customer) {
         return res.status(404).json({ 
           success: false, 
-          message: 'Customer not found' 
+          message: 'Customer not found or access denied' 
         });
       }
 
       res.json({ 
         success: true, 
-        data: customer 
+        data: {
+          ...customer.toObject(),
+          assignmentStatus: customer.assignedTo ? 'assigned' : 'unassigned'
+        }
       });
     } catch (error) {
       res.status(500).json({ 
@@ -96,7 +129,7 @@ class CustomerController {
     }
   }
 
-  // Update customer
+  // Update customer with role-based access
   async updateCustomer(req, res) {
     try {
       const errors = validateCustomer(req.body, true);
@@ -104,22 +137,36 @@ class CustomerController {
         return res.status(400).json({ errors });
       }
 
-      const customer = await Customer.findByIdAndUpdate(
-        req.params.id,
+      const filter = { _id: req.params.id };
+      
+      // Role-based filtering
+      if (!checkRole(req.user, 'admin')) {
+        // Assistants can only update unassigned customers
+        filter.$or = [
+          { assignedTo: { $exists: false } },
+          { assignedTo: null }
+        ];
+      }
+
+      const customer = await Customer.findOneAndUpdate(
+        filter,
         req.body,
         { new: true, runValidators: true }
-      );
+      ).populate('assignedTo', 'name email');
 
       if (!customer) {
         return res.status(404).json({ 
           success: false, 
-          message: 'Customer not found' 
+          message: 'Customer not found or access denied' 
         });
       }
 
       res.json({ 
         success: true, 
-        data: customer,
+        data: {
+          ...customer.toObject(),
+          assignmentStatus: customer.assignedTo ? 'assigned' : 'unassigned'
+        },
         message: 'Customer updated successfully' 
       });
     } catch (error) {
@@ -161,21 +208,87 @@ class CustomerController {
     }
   }
 
-  // Search customers with order history
+  // Assign customer to user (Admin and Manager only)
+  async assignCustomer(req, res) {
+    try {
+      if (!checkRole(req.user, 'admin')) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied' 
+        });
+      }
+
+      const { assignedTo } = req.body;
+      
+      if (!assignedTo) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'assignedTo field is required' 
+        });
+      }
+
+      const customer = await Customer.findByIdAndUpdate(
+        req.params.id,
+        { 
+          assignedTo,
+          assignedAt: new Date(),
+          assignedBy: req.user._id
+        },
+        { new: true, runValidators: true }
+      ).populate('assignedTo', 'name email')
+       .populate('assignedBy', 'name email');
+
+      if (!customer) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'Customer not found' 
+        });
+      }
+
+      res.json({ 
+        success: true, 
+        data: {
+          ...customer.toObject(),
+          assignmentStatus: 'assigned'
+        },
+        message: 'Customer assigned successfully' 
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        success: false, 
+        message: error.message 
+      });
+    }
+  }
+
+  // Search customers with order history and role-based filtering
   async searchWithOrderHistory(req, res) {
     try {
       const { query } = req.query;
       
-      const customers = await Customer.aggregate([
-        {
-          $match: {
+      const matchStage = {
+        $or: [
+          { name: { $regex: query, $options: 'i' } },
+          { email: { $regex: query, $options: 'i' } },
+          { phone: { $regex: query, $options: 'i' } }
+        ]
+      };
+
+      // Role-based filtering
+      if (!checkRole(req.user, 'admin')) {
+        // Assistants can only search unassigned customers
+        matchStage.$and = [
+          {
             $or: [
-              { name: { $regex: query, $options: 'i' } },
-              { email: { $regex: query, $options: 'i' } },
-              { phone: { $regex: query, $options: 'i' } }
+              { assignedTo: { $exists: false } },
+              { assignedTo: null }
             ]
           }
-        },
+        ];
+      }
+      
+      const customers = await Customer.aggregate([
+        { $match: matchStage },
         {
           $lookup: {
             from: 'orders',
@@ -185,10 +298,26 @@ class CustomerController {
           }
         },
         {
+          $lookup: {
+            from: 'users',
+            localField: 'assignedTo',
+            foreignField: '_id',
+            as: 'assignedUser'
+          }
+        },
+        {
           $project: {
             name: 1,
             email: 1,
             phone: 1,
+            assignedTo: { $arrayElemAt: ['$assignedUser', 0] },
+            assignmentStatus: {
+              $cond: [
+                { $gt: [{ $size: '$assignedUser' }, 0] },
+                'assigned',
+                'unassigned'
+              ]
+            },
             orderCount: { $size: '$orders' },
             totalSpent: { $sum: '$orders.total' },
             lastOrderDate: { $max: '$orders.createdAt' }
@@ -208,16 +337,27 @@ class CustomerController {
     }
   }
 
-  // Send WhatsApp message to customer
+  // Send WhatsApp message to customer with role-based access
   async sendWhatsAppMessage(req, res) {
     try {
       const { message } = req.body;
-      const customer = await Customer.findById(req.params.id);
+      const filter = { _id: req.params.id };
+      
+      // Role-based filtering
+      if (!checkRole(req.user, 'admin')) {
+        // Assistants can only message unassigned customers
+        filter.$or = [
+          { assignedTo: { $exists: false } },
+          { assignedTo: null }
+        ];
+      }
+      
+      const customer = await Customer.findOne(filter);
       
       if (!customer) {
         return res.status(404).json({ 
           success: false, 
-          message: 'Customer not found' 
+          message: 'Customer not found or access denied' 
         });
       }
 
@@ -235,17 +375,29 @@ class CustomerController {
     }
   }
 
-  // Get customer analytics
+  // Get customer analytics with role-based filtering
   async getCustomerAnalytics(req, res) {
     try {
-      if (!checkRole(req.user, ['admin', 'manager'])) {
+      if (!checkRole(req.user, 'admin')) {
         return res.status(403).json({ 
           success: false, 
           message: 'Access denied' 
         });
       }
 
+      const matchStage = {};
+      
+      // Role-based filtering for analytics
+      if (!checkRole(req.user, 'admin')) {
+        // Assistants can only see analytics for unassigned customers
+        matchStage.$or = [
+          { assignedTo: { $exists: false } },
+          { assignedTo: null }
+        ];
+      }
+
       const analytics = await Customer.aggregate([
+        { $match: matchStage },
         {
           $lookup: {
             from: 'orders',
@@ -258,6 +410,16 @@ class CustomerController {
           $group: {
             _id: null,
             totalCustomers: { $sum: 1 },
+            assignedCustomers: {
+              $sum: {
+                $cond: [{ $ne: ['$assignedTo', null] }, 1, 0]
+              }
+            },
+            unassignedCustomers: {
+              $sum: {
+                $cond: [{ $eq: ['$assignedTo', null] }, 1, 0]
+              }
+            },
             activeCustomers: {
               $sum: {
                 $cond: [{ $gt: [{ $size: '$orders' }, 0] }, 1, 0]
@@ -267,7 +429,10 @@ class CustomerController {
             topSpenders: {
               $push: {
                 customer: { name: '$name', email: '$email' },
-                totalSpent: { $sum: '$orders.total' }
+                totalSpent: { $sum: '$orders.total' },
+                assignmentStatus: {
+                  $cond: [{ $ne: ['$assignedTo', null] }, 'assigned', 'unassigned']
+                }
               }
             }
           }
