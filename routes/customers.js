@@ -3,6 +3,10 @@ const Customer = require('../models/Customer');
 const { authenticate, authorize } = require('../middleware/auth');
 const router = express.Router();
 
+// @route   GET /api/customers
+// @desc    Get all customers with pagination and filters
+// @access  Private (Admin sees all, Assistant sees assigned)
+// @permission CUSTOMER_VIEW_ALL (admin) or CUSTOMER_VIEW_ASSIGNED (assistant)
 router.get('/', authenticate, async (req, res) => {
   try {
     const {
@@ -18,7 +22,7 @@ router.get('/', authenticate, async (req, res) => {
     // Build filter object
     const filter = { isActive: true };
     
-    // Role-based filtering
+    // Role-based filtering - CUSTOMER_VIEW_ALL vs CUSTOMER_VIEW_ASSIGNED
     if (req.user.role === 'assistant') {
       filter.assignedTo = req.user._id;
     }
@@ -66,6 +70,153 @@ router.get('/', authenticate, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching customers'
+    });
+  }
+});
+
+// @route   GET /api/customers/search
+// @desc    Search customers with filtered results
+// @access  Private (Role-based filtered search)
+// @permission CUSTOMER_VIEW_ASSIGNED + filtered search
+router.get('/search', authenticate, async (req, res) => {
+  try {
+    const { q: query, page = 1, limit = 10 } = req.query;
+
+    if (!query) {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query is required'
+      });
+    }
+
+    // Build filter object with role-based filtering
+    const filter = {
+      isActive: true,
+      $or: [
+        { fullName: { $regex: query, $options: 'i' } },
+        { email: { $regex: query, $options: 'i' } },
+        { phone: { $regex: query, $options: 'i' } },
+        { 'address.city': { $regex: query, $options: 'i' } },
+        { 'address.state': { $regex: query, $options: 'i' } }
+      ]
+    };
+
+    // Role-based filtering - CUSTOMER_VIEW_ASSIGNED
+    if (req.user.role === 'assistant') {
+      filter.assignedTo = req.user._id;
+    }
+
+    const customers = await Customer.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('createdBy', 'firstName lastName')
+      .populate('assignedTo', 'firstName lastName')
+      .select('fullName email phone address segment status totalOrders totalSpent createdAt');
+
+    const total = await Customer.countDocuments(filter);
+
+    res.json({
+      success: true,
+      data: customers,
+      pagination: {
+        current: page,
+        pages: Math.ceil(total / limit),
+        total,
+        limit
+      }
+    });
+
+  } catch (error) {
+    console.error('Search customers error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error searching customers'
+    });
+  }
+});
+
+// @route   GET /api/customers/assigned
+// @desc    Get customers assigned to current user (Assistant-specific)
+// @access  Private (Assistant only)
+// @permission CUSTOMER_VIEW_ASSIGNED (assistant-specific)
+router.get('/assigned', authenticate, async (req, res) => {
+  try {
+    // Only assistants can access this endpoint
+    if (req.user.role !== 'assistant') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. This endpoint is for assistants only.'
+      });
+    }
+
+    const {
+      page = 1,
+      limit = 10,
+      status = '',
+      segment = '',
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build filter for assigned customers only
+    const filter = { 
+      isActive: true,
+      assignedTo: req.user._id
+    };
+
+    if (status) filter.status = status;
+    if (segment) filter.segment = segment;
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const customers = await Customer.find(filter)
+      .sort(sort)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('createdBy', 'firstName lastName')
+      .populate('lastUpdatedBy', 'firstName lastName');
+
+    const total = await Customer.countDocuments(filter);
+
+    // Get assignment statistics
+    const assignmentStats = await Customer.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalAssigned: { $sum: 1 },
+          totalSpent: { $sum: '$totalSpent' },
+          totalOrders: { $sum: '$totalOrders' },
+          averageSpent: { $avg: '$totalSpent' }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      data: customers,
+      pagination: {
+        current: page,
+        pages: Math.ceil(total / limit),
+        total,
+        limit
+      },
+      assignmentStats: assignmentStats[0] || {
+        totalAssigned: 0,
+        totalSpent: 0,
+        totalOrders: 0,
+        averageSpent: 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Get assigned customers error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching assigned customers'
     });
   }
 });
@@ -126,6 +277,7 @@ router.get('/stats', authenticate, async (req, res) => {
 // @route   GET /api/customers/:id
 // @desc    Get single customer by ID
 // @access  Private (Admin & Assistant)
+// @permission CUSTOMER_VIEW_ASSIGNED + resource access check
 router.get('/:id', authenticate, async (req, res) => {
   try {
     // Build filter for role-based access
@@ -163,6 +315,7 @@ router.get('/:id', authenticate, async (req, res) => {
 // @route   POST /api/customers
 // @desc    Create new customer
 // @access  Private (Admin & Assistant)
+// @permission CUSTOMER_CREATE + auto-assignment logic
 router.post('/', authenticate, async (req, res) => {
   try {
     const customerData = {
@@ -170,7 +323,7 @@ router.post('/', authenticate, async (req, res) => {
       createdBy: req.user._id
     };
 
-    // If assistant is creating, auto-assign to themselves
+    // Auto-assignment logic - If assistant is creating, auto-assign to themselves
     if (req.user.role === 'assistant') {
       customerData.assignedTo = req.user._id;
     }
@@ -217,6 +370,7 @@ router.post('/', authenticate, async (req, res) => {
 // @route   PUT /api/customers/:id
 // @desc    Update customer
 // @access  Private (Admin & Assistant)
+// @permission CUSTOMER_UPDATE + resource access check
 router.put('/:id', authenticate, async (req, res) => {
   try {
     // Build filter for role-based access
@@ -271,10 +425,11 @@ router.put('/:id', authenticate, async (req, res) => {
   }
 });
 
-// @route   PUT /api/customers/:id/assign
+// @route   POST /api/customers/:id/assign
 // @desc    Assign customer to assistant (Admin only)
 // @access  Private (Admin only)
-router.put('/:id/assign', authenticate, authorize('admin'), async (req, res) => {
+// @permission USER_UPDATE (admin-only)
+router.post('/:id/assign', authenticate, authorize('admin'), async (req, res) => {
   try {
     const { assignedTo } = req.body; // Can be user ID or null to unassign
 
@@ -319,6 +474,7 @@ router.put('/:id/assign', authenticate, authorize('admin'), async (req, res) => 
 // @route   DELETE /api/customers/:id
 // @desc    Delete customer (soft delete)
 // @access  Private (Admin only)
+// @permission CUSTOMER_DELETE (admin-only)
 router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const customer = await Customer.findByIdAndUpdate(
