@@ -298,6 +298,229 @@ class CustomerController {
     }
   }
 
+  // Search customers with advanced filters and role-based access
+  async searchCustomers(req, res) {
+    try {
+      const { 
+        query = '', 
+        status = '', 
+        segment = '',
+        assignedTo = '',
+        city = '',
+        country = '',
+        dateFrom = '',
+        dateTo = '',
+        page = 1,
+        limit = 10,
+        sortBy = 'createdAt',
+        sortOrder = 'desc'
+      } = req.query;
+
+      // Build filter object
+      const filter = { isActive: true };
+      
+      // Role-based filtering - Assistants see only their assigned customers
+      if (req.user.role === USER_ROLES.ASSISTANT) {
+        filter.assignedTo = req.user._id;
+      }
+      
+      // Text search across multiple fields
+      if (query) {
+        filter.$or = [
+          { fullName: { $regex: query, $options: 'i' } },
+          { email: { $regex: query, $options: 'i' } },
+          { phone: { $regex: query, $options: 'i' } },
+          { 'address.street': { $regex: query, $options: 'i' } },
+          { 'address.city': { $regex: query, $options: 'i' } }
+        ];
+      }
+      
+      // Filter by status
+      if (status) filter.status = status;
+      
+      // Filter by segment
+      if (segment) filter.segment = segment;
+      
+      // Filter by assigned user (Admin only)
+      if (assignedTo && req.user.role === USER_ROLES.ADMIN) {
+        filter.assignedTo = assignedTo === 'unassigned' ? null : assignedTo;
+      }
+      
+      // Filter by city
+      if (city) filter['address.city'] = { $regex: city, $options: 'i' };
+      
+      // Filter by country
+      if (country) filter['address.country'] = { $regex: country, $options: 'i' };
+      
+      // Date range filter
+      if (dateFrom || dateTo) {
+        filter.createdAt = {};
+        if (dateFrom) filter.createdAt.$gte = new Date(dateFrom);
+        if (dateTo) filter.createdAt.$lte = new Date(dateTo);
+      }
+
+      // Build sort object
+      const sort = {};
+      sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+      const customers = await Customer.find(filter)
+        .sort(sort)
+        .limit(limit * 1)
+        .skip((page - 1) * limit)
+        .populate('createdBy', 'firstName lastName')
+        .populate('lastUpdatedBy', 'firstName lastName')
+        .populate('assignedTo', 'firstName lastName');
+
+      const total = await Customer.countDocuments(filter);
+
+      res.json({
+        success: true,
+        data: customers,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        },
+        searchQuery: query,
+        filters: {
+          status,
+          segment,
+          assignedTo,
+          city,
+          country,
+          dateFrom,
+          dateTo
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        success: false, 
+        message: error.message 
+      });
+    }
+  }
+
+  // Get customers assigned to a specific assistant (Admin only)
+  async getAssignedCustomers(req, res) {
+    try {
+      // Only admins can view any assistant's customers
+      if (req.user.role !== USER_ROLES.ADMIN) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied. Admin privileges required.' 
+        });
+      }
+
+      const { 
+        assistantId,
+        page = 1, 
+        limit = 10, 
+        search = '', 
+        status = '', 
+        segment = '',
+        sortBy = 'createdAt',
+        sortOrder = 'desc'
+      } = req.query;
+
+      if (!assistantId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Assistant ID is required'
+        });
+      }
+
+      // Build filter object
+      const filter = { 
+        isActive: true,
+        assignedTo: assistantId
+      };
+      
+      // Search filter
+      if (search) {
+        filter.$or = [
+          { fullName: { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } },
+          { phone: { $regex: search, $options: 'i' } }
+        ];
+      }
+      
+      // Additional filters
+      if (status) filter.status = status;
+      if (segment) filter.segment = segment;
+
+      // Build sort object
+      const sort = {};
+      sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+      const customers = await Customer.find(filter)
+        .sort(sort)
+        .limit(limit * 1)
+        .skip((page - 1) * limit)
+        .populate('createdBy', 'firstName lastName')
+        .populate('lastUpdatedBy', 'firstName lastName')
+        .populate('assignedTo', 'firstName lastName');
+
+      const total = await Customer.countDocuments(filter);
+
+      // Get assistant info
+      const User = require('../models/User');
+      const assistant = await User.findById(assistantId).select('firstName lastName email');
+
+      if (!assistant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Assistant not found'
+        });
+      }
+
+      // Get assignment statistics
+      const stats = await Customer.aggregate([
+        { $match: { assignedTo: assistantId, isActive: true } },
+        {
+          $group: {
+            _id: null,
+            totalAssigned: { $sum: 1 },
+            byStatus: {
+              $push: {
+                status: '$status',
+                count: 1
+              }
+            },
+            bySegment: {
+              $push: {
+                segment: '$segment',
+                count: 1
+              }
+            }
+          }
+        }
+      ]);
+
+      res.json({
+        success: true,
+        data: customers,
+        assistant: {
+          id: assistant._id,
+          name: `${assistant.firstName} ${assistant.lastName}`,
+          email: assistant.email
+        },
+        statistics: stats[0] || { totalAssigned: 0, byStatus: [], bySegment: [] },
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        success: false, 
+        message: error.message 
+      });
+    }
+  }
+
   // Search customers with order history and role-based filtering
   async searchWithOrderHistory(req, res) {
     try {
