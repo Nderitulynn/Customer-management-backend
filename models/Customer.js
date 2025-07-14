@@ -53,6 +53,12 @@ const customerSchema = new mongoose.Schema({
     maxlength: [1000, 'Notes cannot exceed 1000 characters'] 
   },
 
+  // Order History References
+  orderHistory: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order'
+  }],
+
   // Status and Source
   status: {
     type: String,
@@ -121,6 +127,7 @@ customerSchema.index({ segment: 1 });
 customerSchema.index({ assignedTo: 1 });
 customerSchema.index({ createdAt: -1 });
 customerSchema.index({ fullName: 'text' }); // Text index for search
+customerSchema.index({ orderHistory: 1 }); // Index for order history queries
 
 // Virtual for customer age/duration
 customerSchema.virtual('customerAge').get(function() {
@@ -225,6 +232,7 @@ customerSchema.statics.getBySegment = async function(segment, options = {}) {
   const customers = await this.find(query)
     .populate('assignedTo', 'fullName')
     .populate('createdBy', 'fullName')
+    .populate('orderHistory', 'orderNumber totalAmount status createdAt')
     .sort(sort)
     .skip(skip)
     .limit(limit);
@@ -243,20 +251,17 @@ customerSchema.statics.getBySegment = async function(segment, options = {}) {
   };
 };
 
-// Instance method to update segment based on spending/orders
-customerSchema.methods.updateSegment = function() {
-  if (this.totalOrders === 0) {
-    this.segment = 'new';
-  } else if (this.totalSpent >= 10000) { // VIP threshold
-    this.segment = 'vip';
-  } else if (this.totalOrders >= 5) {
-    this.segment = 'regular';
-  } else if (this.lastOrderDate && new Date() - this.lastOrderDate > 90 * 24 * 60 * 60 * 1000) {
-    this.segment = 'inactive'; // No order in 90 days
-  } else {
-    this.segment = 'regular';
+// Instance method to add order to history
+customerSchema.methods.addOrderToHistory = function(orderId) {
+  if (!this.orderHistory.includes(orderId)) {
+    this.orderHistory.push(orderId);
   }
-  
+  return this;
+};
+
+// Instance method to remove order from history
+customerSchema.methods.removeOrderFromHistory = function(orderId) {
+  this.orderHistory = this.orderHistory.filter(id => !id.equals(orderId));
   return this;
 };
 
