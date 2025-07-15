@@ -35,6 +35,20 @@ router.get('/assistants',
   userController.getAllAssistants
 );
 
+// NEW: Get available assistants for assignment
+router.get('/assistants/available', 
+  authenticate,
+  authorize(['admin']),
+  userController.getAvailableAssistants
+);
+
+// NEW: Get real workload calculation for assistants
+router.get('/assistants/workload', 
+  authenticate,
+  authorize(['admin']),
+  userController.getAssistantsWorkload
+);
+
 router.get('/assistants/:id', 
   authenticate,
   authorize(['admin']),
@@ -74,7 +88,7 @@ router.get('/assistants/:id/performance',
   userController.getAssistantPerformance
 );
 
-// Bulk operations (admin only)
+// UPDATED: Bulk operations (admin only) - Fixed to use proper customer assignment
 router.post('/assistants/bulk-assign', 
   authenticate,
   authorize(['admin']),
@@ -99,12 +113,14 @@ router.get('/profile',
 router.put('/profile', 
   authenticate,
   authorize(['assistant']),
+  validator.validateRequest('profile'), // Updated validation for profile
   userController.updateMyProfile
 );
 
 router.patch('/change-password', 
   authenticate,
   authorize(['assistant']),
+  validator.validateRequest('password'), // Added validation for password change
   userController.changeMyPassword
 );
 
