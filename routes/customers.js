@@ -136,6 +136,392 @@ router.get('/search', authenticate, async (req, res) => {
   }
 });
 
+// @route   GET /api/customers/available-to-claim
+// @desc    Get unassigned customers available for assistants to claim
+// @access  Private (Assistant only)
+// @permission CUSTOMER_VIEW_AVAILABLE
+router.get('/available-to-claim', authenticate, async (req, res) => {
+  try {
+    // Only assistants can access this endpoint
+    if (req.user.role !== 'assistant') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. This endpoint is for assistants only.'
+      });
+    }
+
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      status = '',
+      segment = '',
+      priority = '',
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build filter for unassigned customers only
+    const filter = { 
+      isActive: true,
+      assignedTo: null  // Only unassigned customers
+    };
+
+    if (search) {
+      filter.$or = [
+        { fullName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { phone: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    if (status) filter.status = status;
+    if (segment) filter.segment = segment;
+    if (priority) filter.priority = priority;
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const customers = await Customer.find(filter)
+      .sort(sort)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('createdBy', 'firstName lastName')
+      .select('fullName email phone address segment status priority totalOrders totalSpent createdAt');
+
+    const total = await Customer.countDocuments(filter);
+
+    // Get availability statistics
+    const availabilityStats = await Customer.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalAvailable: { $sum: 1 },
+          totalPotentialSpent: { $sum: '$totalSpent' },
+          totalPotentialOrders: { $sum: '$totalOrders' },
+          averagePotentialSpent: { $avg: '$totalSpent' }
+        }
+      }
+    ]);
+
+    // Priority breakdown
+    const priorityBreakdown = await Customer.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$priority',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      data: customers,
+      pagination: {
+        current: page,
+        pages: Math.ceil(total / limit),
+        total,
+        limit
+      },
+      availabilityStats: availabilityStats[0] || {
+        totalAvailable: 0,
+        totalPotentialSpent: 0,
+        totalPotentialOrders: 0,
+        averagePotentialSpent: 0
+      },
+      priorityBreakdown
+    });
+
+  } catch (error) {
+    console.error('Get available customers error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching available customers'
+    });
+  }
+});
+
+// @route   POST /api/customers/:id/claim
+// @desc    Assistant self-assignment of unassigned customer
+// @access  Private (Assistant only)
+// @permission CUSTOMER_CLAIM
+router.post('/:id/claim', authenticate, async (req, res) => {
+  try {
+    // Only assistants can access this endpoint
+    if (req.user.role !== 'assistant') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Only assistants can claim customers.'
+      });
+    }
+
+    // Find the customer and ensure it's unassigned
+    const customer = await Customer.findOne({
+      _id: req.params.id,
+      isActive: true,
+      assignedTo: null  // Must be unassigned
+    });
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found or already assigned'
+      });
+    }
+
+    // Claim the customer
+    const updatedCustomer = await Customer.findByIdAndUpdate(
+      req.params.id,
+      { 
+        assignedTo: req.user._id,
+        lastUpdatedBy: req.user._id,
+        assignedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    )
+    .populate('createdBy', 'firstName lastName')
+    .populate('lastUpdatedBy', 'firstName lastName')
+    .populate('assignedTo', 'firstName lastName');
+
+    res.json({
+      success: true,
+      message: 'Customer claimed successfully',
+      data: updatedCustomer
+    });
+
+  } catch (error) {
+    console.error('Claim customer error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error claiming customer'
+    });
+  }
+});
+
+// @route   GET /api/customers/my-customers
+// @desc    Get customers claimed by current assistant
+// @access  Private (Assistant only)
+// @permission CUSTOMER_VIEW_MY_CUSTOMERS
+router.get('/my-customers', authenticate, async (req, res) => {
+  try {
+    // Only assistants can access this endpoint
+    if (req.user.role !== 'assistant') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. This endpoint is for assistants only.'
+      });
+    }
+
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      status = '',
+      segment = '',
+      priority = '',
+      sortBy = 'assignedAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build filter for my customers only
+    const filter = { 
+      isActive: true,
+      assignedTo: req.user._id
+    };
+
+    if (search) {
+      filter.$or = [
+        { fullName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { phone: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    if (status) filter.status = status;
+    if (segment) filter.segment = segment;
+    if (priority) filter.priority = priority;
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const customers = await Customer.find(filter)
+      .sort(sort)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('createdBy', 'firstName lastName')
+      .populate('lastUpdatedBy', 'firstName lastName');
+
+    const total = await Customer.countDocuments(filter);
+
+    // Get my customer statistics
+    const myCustomerStats = await Customer.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalMyClaimed: { $sum: 1 },
+          totalMySpent: { $sum: '$totalSpent' },
+          totalMyOrders: { $sum: '$totalOrders' },
+          averageMySpent: { $avg: '$totalSpent' }
+        }
+      }
+    ]);
+
+    // Status breakdown for my customers
+    const statusBreakdown = await Customer.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Recently claimed (last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const recentlyClaimed = await Customer.countDocuments({
+      ...filter,
+      assignedAt: { $gte: sevenDaysAgo }
+    });
+
+    res.json({
+      success: true,
+      data: customers,
+      pagination: {
+        current: page,
+        pages: Math.ceil(total / limit),
+        total,
+        limit
+      },
+      myCustomerStats: myCustomerStats[0] || {
+        totalMyClaimed: 0,
+        totalMySpent: 0,
+        totalMyOrders: 0,
+        averageMySpent: 0
+      },
+      statusBreakdown,
+      recentlyClaimed
+    });
+
+  } catch (error) {
+    console.error('Get my customers error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching my customers'
+    });
+  }
+});
+
+// @route   POST /api/customers/:id/reassign
+// @desc    Admin reassignment of customer with validation
+// @access  Private (Admin only)
+// @permission CUSTOMER_REASSIGN
+router.post('/:id/reassign', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { newAssignedTo, reason } = req.body;
+
+    // Validate required fields
+    if (!newAssignedTo) {
+      return res.status(400).json({
+        success: false,
+        message: 'New assigned user ID is required'
+      });
+    }
+
+    // Find the customer
+    const customer = await Customer.findOne({
+      _id: req.params.id,
+      isActive: true
+    }).populate('assignedTo', 'firstName lastName');
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+
+    // Validate that new assignee exists and is an assistant
+    const User = require('../models/User');
+    const newAssignee = await User.findOne({
+      _id: newAssignedTo,
+      role: 'assistant',
+      isActive: true
+    });
+
+    if (!newAssignee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid assignee. User must be an active assistant.'
+      });
+    }
+
+    // Check if customer is already assigned to this user
+    if (customer.assignedTo && customer.assignedTo._id.toString() === newAssignedTo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer is already assigned to this user'
+      });
+    }
+
+    // Store previous assignment info for logging
+    const previousAssignment = {
+      previousAssignedTo: customer.assignedTo ? customer.assignedTo._id : null,
+      previousAssignedToName: customer.assignedTo 
+        ? `${customer.assignedTo.firstName} ${customer.assignedTo.lastName}`
+        : 'Unassigned',
+      reassignedBy: req.user._id,
+      reassignedAt: new Date(),
+      reason: reason || 'No reason provided'
+    };
+
+    // Update customer assignment
+    const updatedCustomer = await Customer.findByIdAndUpdate(
+      req.params.id,
+      { 
+        assignedTo: newAssignedTo,
+        lastUpdatedBy: req.user._id,
+        assignedAt: new Date(),
+        // Add reassignment history
+        $push: {
+          assignmentHistory: previousAssignment
+        }
+      },
+      { new: true, runValidators: true }
+    )
+    .populate('createdBy', 'firstName lastName')
+    .populate('lastUpdatedBy', 'firstName lastName')
+    .populate('assignedTo', 'firstName lastName');
+
+    res.json({
+      success: true,
+      message: `Customer reassigned from ${previousAssignment.previousAssignedToName} to ${updatedCustomer.assignedTo.firstName} ${updatedCustomer.assignedTo.lastName}`,
+      data: updatedCustomer,
+      reassignmentInfo: {
+        previousAssignee: previousAssignment.previousAssignedToName,
+        newAssignee: `${updatedCustomer.assignedTo.firstName} ${updatedCustomer.assignedTo.lastName}`,
+        reason: previousAssignment.reason,
+        reassignedBy: `${req.user.firstName} ${req.user.lastName}`,
+        reassignedAt: previousAssignment.reassignedAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Reassign customer error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error reassigning customer'
+    });
+  }
+});
+
 // @route   GET /api/customers/assigned
 // @desc    Get customers assigned to current user (Assistant-specific)
 // @access  Private (Assistant only)
