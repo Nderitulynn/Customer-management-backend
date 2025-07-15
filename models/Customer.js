@@ -107,11 +107,51 @@ const customerSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  
+  // UPDATED: Assignment fields - now supports unassigned state
   assignedTo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
-  }
+    default: null  // CHANGED: Made optional to allow unassigned customers
+  },
+  assignedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null  // NEW: Who made the assignment (admin or self for claiming)
+  },
+  assignedAt: {
+    type: Date,
+    default: null  // NEW: When the assignment was made
+  },
+  claimedAt: {
+    type: Date,
+    default: null  // NEW: When assistant claimed the customer
+  },
+  
+  // NEW: Assignment history tracking
+  assignmentHistory: [{
+    assignedTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    assignedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    assignedAt: {
+      type: Date,
+      default: Date.now
+    },
+    action: {
+      type: String,
+      enum: ['claimed', 'assigned', 'reassigned', 'unassigned'],
+      required: true
+    },
+    reason: {
+      type: String,
+      maxlength: [200, 'Reason cannot exceed 200 characters']
+    }
+  }]
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -125,6 +165,9 @@ customerSchema.index({ status: 1 });
 customerSchema.index({ isActive: 1 });
 customerSchema.index({ segment: 1 });
 customerSchema.index({ assignedTo: 1 });
+customerSchema.index({ assignedAt: -1 });  // NEW: For assignment queries
+customerSchema.index({ claimedAt: -1 });   // NEW: For claimed customer queries
+customerSchema.index({ assignedBy: 1 });   // NEW: For assignment tracking
 customerSchema.index({ createdAt: -1 });
 customerSchema.index({ fullName: 'text' }); // Text index for search
 customerSchema.index({ orderHistory: 1 }); // Index for order history queries
@@ -136,15 +179,22 @@ customerSchema.virtual('customerAge').get(function() {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); // Days since customer creation
 });
 
+// NEW: Virtual for assignment status
+customerSchema.virtual('assignmentStatus').get(function() {
+  if (!this.assignedTo) return 'unassigned';
+  if (this.claimedAt) return 'claimed';
+  return 'assigned';
+});
+
 // Pre-save middleware to update updatedAt timestamp
 customerSchema.pre('save', function(next) {
   this.updatedAt = new Date();
   next();
 });
 
-// Validation rules
+// UPDATED: Validation rules - removed assignedTo requirement
 customerSchema.pre('save', function(next) {
-  // Ensure required fields are present
+  // Ensure required fields are present (assignedTo no longer required)
   if (!this.fullName || !this.email || !this.phone) {
     return next(new Error('Full name, email, and phone are required'));
   }
@@ -158,7 +208,7 @@ customerSchema.pre('save', function(next) {
   next();
 });
 
-// ADDED: Static method for customer statistics
+// EXISTING: Static method for customer statistics
 customerSchema.statics.getStats = async function() {
   const stats = await this.aggregate([
     {
@@ -216,7 +266,7 @@ customerSchema.statics.getStats = async function() {
   };
 };
 
-// ADDED: Static method to get customers by segment
+// EXISTING: Static method to get customers by segment
 customerSchema.statics.getBySegment = async function(segment, options = {}) {
   const {
     page = 1,
@@ -251,7 +301,142 @@ customerSchema.statics.getBySegment = async function(segment, options = {}) {
   };
 };
 
-// Instance method to add order to history
+// NEW: Get unassigned customers (for assistant claiming)
+customerSchema.statics.getUnassignedCustomers = async function(options = {}) {
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = 'createdAt',
+    sortOrder = 'desc'
+  } = options;
+
+  const query = { 
+    assignedTo: null, 
+    isActive: true 
+  };
+  
+  const skip = (page - 1) * limit;
+  const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+
+  const customers = await this.find(query)
+    .populate('createdBy', 'fullName')
+    .sort(sort)
+    .skip(skip)
+    .limit(limit);
+
+  const total = await this.countDocuments(query);
+
+  return {
+    customers,
+    pagination: {
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
+      totalItems: total,
+      hasNext: page < Math.ceil(total / limit),
+      hasPrev: page > 1
+    }
+  };
+};
+
+// NEW: Get customers by assistant (for "my customers" view)
+customerSchema.statics.getCustomersByAssistant = async function(assistantId, options = {}) {
+  const {
+    page = 1,
+    limit = 10,
+    sortBy = 'assignedAt',
+    sortOrder = 'desc'
+  } = options;
+
+  const query = { 
+    assignedTo: assistantId, 
+    isActive: true 
+  };
+  
+  const skip = (page - 1) * limit;
+  const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+
+  const customers = await this.find(query)
+    .populate('createdBy', 'fullName')
+    .populate('assignedBy', 'fullName')
+    .populate('orderHistory', 'orderNumber totalAmount status createdAt')
+    .sort(sort)
+    .skip(skip)
+    .limit(limit);
+
+  const total = await this.countDocuments(query);
+
+  return {
+    customers,
+    pagination: {
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
+      totalItems: total,
+      hasNext: page < Math.ceil(total / limit),
+      hasPrev: page > 1
+    }
+  };
+};
+
+// NEW: Get assignment workload statistics
+customerSchema.statics.getAssignmentStats = async function() {
+  const stats = await this.aggregate([
+    {
+      $group: {
+        _id: null,
+        totalCustomers: { $sum: 1 },
+        assignedCustomers: { $sum: { $cond: [{ $ne: ['$assignedTo', null] }, 1, 0] } },
+        unassignedCustomers: { $sum: { $cond: [{ $eq: ['$assignedTo', null] }, 1, 0] } },
+        claimedCustomers: { $sum: { $cond: [{ $ne: ['$claimedAt', null] }, 1, 0] } }
+      }
+    }
+  ]);
+
+  const assistantWorkload = await this.aggregate([
+    {
+      $match: { assignedTo: { $ne: null } }
+    },
+    {
+      $group: {
+        _id: '$assignedTo',
+        customerCount: { $sum: 1 },
+        totalSpent: { $sum: '$totalSpent' },
+        avgSpent: { $avg: '$totalSpent' }
+      }
+    },
+    {
+      $lookup: {
+        from: 'users',
+        localField: '_id',
+        foreignField: '_id',
+        as: 'assistant'
+      }
+    },
+    {
+      $project: {
+        assistantId: '$_id',
+        assistantName: { $arrayElemAt: ['$assistant.fullName', 0] },
+        customerCount: 1,
+        totalSpent: 1,
+        avgSpent: 1
+      }
+    },
+    {
+      $sort: { customerCount: -1 }
+    }
+  ]);
+
+  return {
+    overview: stats[0] || {
+      totalCustomers: 0,
+      assignedCustomers: 0,
+      unassignedCustomers: 0,
+      claimedCustomers: 0
+    },
+    assistantWorkload
+  };
+};
+
+// EXISTING: Instance method to add order to history
 customerSchema.methods.addOrderToHistory = function(orderId) {
   if (!this.orderHistory.includes(orderId)) {
     this.orderHistory.push(orderId);
@@ -259,9 +444,68 @@ customerSchema.methods.addOrderToHistory = function(orderId) {
   return this;
 };
 
-// Instance method to remove order from history
+// EXISTING: Instance method to remove order from history
 customerSchema.methods.removeOrderFromHistory = function(orderId) {
   this.orderHistory = this.orderHistory.filter(id => !id.equals(orderId));
+  return this;
+};
+
+// NEW: Method to claim customer (assistant self-assignment)
+customerSchema.methods.claimCustomer = function(assistantId) {
+  if (this.assignedTo && this.assignedTo.toString() !== assistantId.toString()) {
+    throw new Error('Customer is already assigned to another assistant');
+  }
+  
+  this.assignedTo = assistantId;
+  this.assignedBy = assistantId;
+  this.assignedAt = new Date();
+  this.claimedAt = new Date();
+  
+  this.assignmentHistory.push({
+    assignedTo: assistantId,
+    assignedBy: assistantId,
+    assignedAt: new Date(),
+    action: 'claimed'
+  });
+  
+  return this;
+};
+
+// NEW: Method to reassign customer (admin action)
+customerSchema.methods.reassignCustomer = function(newAssistantId, adminId, reason = null) {
+  const previousAssignedTo = this.assignedTo;
+  
+  this.assignedTo = newAssistantId;
+  this.assignedBy = adminId;
+  this.assignedAt = new Date();
+  this.claimedAt = null; // Reset claimed date for reassignment
+  
+  this.assignmentHistory.push({
+    assignedTo: newAssistantId,
+    assignedBy: adminId,
+    assignedAt: new Date(),
+    action: previousAssignedTo ? 'reassigned' : 'assigned',
+    reason: reason
+  });
+  
+  return this;
+};
+
+// NEW: Method to unassign customer (admin action)
+customerSchema.methods.unassignCustomer = function(adminId, reason = null) {
+  this.assignedTo = null;
+  this.assignedBy = null;
+  this.assignedAt = null;
+  this.claimedAt = null;
+  
+  this.assignmentHistory.push({
+    assignedTo: null,
+    assignedBy: adminId,
+    assignedAt: new Date(),
+    action: 'unassigned',
+    reason: reason
+  });
+  
   return this;
 };
 
