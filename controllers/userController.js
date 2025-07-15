@@ -128,20 +128,26 @@ const createAssistant = async (req, res) => {
 const getAllAssistants = async (req, res) => {
   try {
     const assistants = await User.find({ role: 'assistant' })
-      .populate('customers', 'name email')
       .select('-password')
       .sort({ createdAt: -1 });
 
-    const assistantsWithMetrics = assistants.map(assistant => ({
-      id: assistant._id,
-      firstName: assistant.firstName,
-      lastName: assistant.lastName,
-      email: assistant.email,
-      isActive: assistant.isActive,
-      customerCount: assistant.customers ? assistant.customers.length : 0,
-      lastLogin: assistant.lastLogin,
-      mustChangePassword: assistant.mustChangePassword
-    }));
+    // FIXED: Calculate customer count via Customer queries instead of user.customers
+    const assistantsWithMetrics = await Promise.all(
+      assistants.map(async (assistant) => {
+        const customerCount = await Customer.countDocuments({ assignedTo: assistant._id });
+        
+        return {
+          id: assistant._id,
+          firstName: assistant.firstName,
+          lastName: assistant.lastName,
+          email: assistant.email,
+          isActive: assistant.isActive,
+          customerCount: customerCount,
+          lastLogin: assistant.lastLogin,
+          mustChangePassword: assistant.mustChangePassword
+        };
+      })
+    );
 
     res.json(assistantsWithMetrics);
   } catch (error) {
@@ -154,14 +160,22 @@ const getAssistantDetails = async (req, res) => {
     const { id } = req.params;
     
     const assistant = await User.findById(id)
-      .populate('customers', 'name email')
       .select('-password');
 
     if (!assistant || assistant.role !== 'assistant') {
       return res.status(404).json({ error: 'Assistant not found' });
     }
 
-    res.json(assistant);
+    // FIXED: Get assigned customers via Customer query instead of populate
+    const assignedCustomers = await Customer.find({ assignedTo: id })
+      .select('name email isActive');
+
+    const assistantWithCustomers = {
+      ...assistant.toObject(),
+      customers: assignedCustomers
+    };
+
+    res.json(assistantWithCustomers);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -170,11 +184,11 @@ const getAssistantDetails = async (req, res) => {
 const updateAssistant = async (req, res) => {
   try {
     const { id } = req.params;
-    const { firstName, lastName, customers } = req.body;
+    const { firstName, lastName } = req.body;
 
     const assistant = await User.findByIdAndUpdate(
       id,
-      { firstName, lastName, customers },
+      { firstName, lastName },
       { new: true, select: '-password' }
     );
 
@@ -262,14 +276,22 @@ const resetPassword = async (req, res) => {
 const getMyProfile = async (req, res) => {
   try {
     const assistant = await User.findById(req.user.id)
-      .populate('customers', 'name email')
       .select('-password');
 
     if (!assistant) {
       return res.status(404).json({ error: 'Profile not found' });
     }
 
-    res.json(assistant);
+    // FIXED: Get assigned customers via Customer query instead of populate
+    const assignedCustomers = await Customer.find({ assignedTo: req.user.id })
+      .select('name email isActive');
+
+    const profileWithCustomers = {
+      ...assistant.toObject(),
+      customers: assignedCustomers
+    };
+
+    res.json(profileWithCustomers);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -327,15 +349,14 @@ const getAssistantPerformance = async (req, res) => {
     const { id } = req.params;
     
     const assistant = await User.findById(id)
-      .populate('customers', 'name email')
       .select('-password');
 
     if (!assistant) {
       return res.status(404).json({ error: 'Assistant not found' });
     }
 
-    // Calculate metrics
-    const totalCustomers = assistant.customers ? assistant.customers.length : 0;
+    // FIXED: Calculate metrics via Customer queries instead of user.customers
+    const totalCustomers = await Customer.countDocuments({ assignedTo: id });
     const activeCustomers = await Customer.countDocuments({
       assignedTo: id,
       isActive: true
@@ -371,20 +392,13 @@ const bulkAssignCustomers = async (req, res) => {
   try {
     const { assistantId, customerIds, action } = req.body;
 
+    // FIXED: Remove User.findByIdAndUpdate operations on non-existent customers array
     if (action === 'assign') {
-      await User.findByIdAndUpdate(assistantId, {
-        $addToSet: { customers: { $each: customerIds } }
-      });
-      
       await Customer.updateMany(
         { _id: { $in: customerIds } },
         { assignedTo: assistantId }
       );
     } else if (action === 'unassign') {
-      await User.findByIdAndUpdate(assistantId, {
-        $pullAll: { customers: customerIds }
-      });
-      
       await Customer.updateMany(
         { _id: { $in: customerIds } },
         { $unset: { assignedTo: 1 } }
@@ -403,17 +417,8 @@ const reassignCustomers = async (req, res) => {
   try {
     const { fromAssistantId, toAssistantId, customerIds } = req.body;
 
-    // Remove from old assistant
-    await User.findByIdAndUpdate(fromAssistantId, {
-      $pullAll: { customers: customerIds }
-    });
-
-    // Add to new assistant
-    await User.findByIdAndUpdate(toAssistantId, {
-      $addToSet: { customers: { $each: customerIds } }
-    });
-
-    // Update customer records
+    // FIXED: Remove User.findByIdAndUpdate operations on non-existent customers array
+    // Simply update customer records with new assignment
     await Customer.updateMany(
       { _id: { $in: customerIds } },
       { assignedTo: toAssistantId }
