@@ -14,21 +14,16 @@ class CustomerController {
         });
       }
 
-      const customerData = {
-        ...req.body,
-        createdBy: req.user._id
-      };
+      const customerData = { ...req.body };
 
       // If assistant is creating, auto-assign to themselves
       if (req.user.role === USER_ROLES.ASSISTANT) {
         customerData.assignedTo = req.user._id;
-        customerData.lastAssignmentDate = new Date();
       }
 
       const customer = new Customer(customerData);
       await customer.save();
 
-      await customer.populate('createdBy', 'firstName lastName');
       await customer.populate('assignedTo', 'firstName lastName');
       
       res.status(201).json({ 
@@ -97,7 +92,6 @@ class CustomerController {
         .sort(sort)
         .limit(limit * 1)
         .skip((page - 1) * limit)
-        .populate('createdBy', 'firstName lastName')
         .populate('assignedTo', 'firstName lastName');
 
       const total = await Customer.countDocuments(filter);
@@ -131,7 +125,6 @@ class CustomerController {
       }
       
       const customer = await Customer.findOne(filter)
-        .populate('createdBy', 'firstName lastName')
         .populate('assignedTo', 'firstName lastName');
       
       if (!customer) {
@@ -171,17 +164,13 @@ class CustomerController {
         filter.assignedTo = req.user._id;
       }
 
-      const updateData = {
-        ...req.body,
-        lastUpdatedBy: req.user._id
-      };
+      const updateData = { ...req.body };
 
       const customer = await Customer.findOneAndUpdate(
         filter,
         updateData,
         { new: true, runValidators: true }
       )
-      .populate('createdBy', 'firstName lastName')
       .populate('assignedTo', 'firstName lastName');
 
       if (!customer) {
@@ -225,10 +214,7 @@ class CustomerController {
 
       const customer = await Customer.findByIdAndUpdate(
         req.params.id,
-        { 
-          isActive: false,
-          lastUpdatedBy: req.user._id
-        },
+        { isActive: false },
         { new: true }
       );
       
@@ -254,6 +240,13 @@ class CustomerController {
   // Claim customer (Assistant can claim unassigned customers)
   async claimCustomer(req, res) {
     try {
+      if (req.user.role !== USER_ROLES.ASSISTANT) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied. Only assistants can claim customers.' 
+        });
+      }
+
       const customerId = req.params.id;
       const userId = req.user._id;
 
@@ -276,11 +269,7 @@ class CustomerController {
       // Update customer assignment
       const updatedCustomer = await Customer.findByIdAndUpdate(
         customerId,
-        {
-          assignedTo: userId,
-          lastAssignmentDate: new Date(),
-          lastUpdatedBy: userId
-        },
+        { assignedTo: userId },
         { new: true, runValidators: true }
       )
       .populate('assignedTo', 'firstName lastName');
@@ -321,11 +310,7 @@ class CustomerController {
 
       const updatedCustomer = await Customer.findByIdAndUpdate(
         customerId,
-        { 
-          assignedTo: assignedTo || null,
-          lastAssignmentDate: assignedTo ? new Date() : null,
-          lastUpdatedBy: req.user._id
-        },
+        { assignedTo: assignedTo || null },
         { new: true, runValidators: true }
       )
       .populate('assignedTo', 'firstName lastName');
@@ -380,7 +365,7 @@ class CustomerController {
       if (req.user.role === USER_ROLES.ADMIN) {
         unassignedCustomers = await Customer.countDocuments({
           isActive: true,
-          assignedTo: { $exists: false }
+          assignedTo: null
         });
       }
 
