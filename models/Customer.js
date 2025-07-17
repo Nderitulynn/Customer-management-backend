@@ -2,12 +2,18 @@
 const mongoose = require('mongoose');
 
 const customerSchema = new mongoose.Schema({
-  // Basic Information
-  fullName: {
+  // Basic Information - Updated to match User model naming
+  firstName: {
     type: String,
-    required: [true, 'Full name is required'],
+    required: [true, 'First name is required'],
     trim: true,
-    maxlength: [100, 'Full name cannot exceed 100 characters']
+    maxlength: [50, 'First name cannot exceed 50 characters']
+  },
+  lastName: {
+    type: String,
+    required: [true, 'Last name is required'],
+    trim: true,
+    maxlength: [50, 'Last name cannot exceed 50 characters']
   },
   email: {
     type: String,
@@ -15,7 +21,13 @@ const customerSchema = new mongoose.Schema({
     unique: true,
     lowercase: true,
     trim: true,
-    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
+    // Updated to match User model email validation
+    validate: {
+      validator: function(v) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      },
+      message: 'Please enter a valid email'
+    }
   },
   phone: {
     type: String,
@@ -58,15 +70,10 @@ const customerSchema = new mongoose.Schema({
     ref: 'Order'
   }],
 
-  // Basic Status Fields
+  // Simplified Status - Removed redundant 'status' field, keeping only 'isActive'
   isActive: {
     type: Boolean,
     default: true
-  },
-  status: {
-    type: String,
-    enum: ['active', 'inactive'],
-    default: 'active'
   },
   source: {
     type: String,
@@ -101,7 +108,13 @@ const customerSchema = new mongoose.Schema({
     default: null
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toObject: { virtuals: true }
+});
+
+// Virtual for full name - matches User model pattern
+customerSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`;
 });
 
 // Basic Indexes
@@ -109,6 +122,6 @@ customerSchema.index({ email: 1 });
 customerSchema.index({ phone: 1 });
 customerSchema.index({ isActive: 1 });
 customerSchema.index({ assignedTo: 1 });
-customerSchema.index({ fullName: 'text' });
+customerSchema.index({ firstName: 'text', lastName: 'text' });
 
 module.exports = mongoose.model('Customer', customerSchema);
