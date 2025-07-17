@@ -20,7 +20,6 @@ const registerAdmin = async (req, res) => {
       return res.status(400).json({ error: 'Email already exists' });
     }
 
-    // FIXED: Remove manual hashing - let User model handle it
     const admin = new User({
       firstName,
       lastName,
@@ -91,7 +90,6 @@ const createAssistant = async (req, res) => {
 
     // Generate temporary password
     const tempPassword = generatePassword();
-    // FIXED: Remove manual hashing - let User model handle it
 
     const assistant = new User({
       firstName,
@@ -131,7 +129,6 @@ const getAllAssistants = async (req, res) => {
       .select('-password')
       .sort({ createdAt: -1 });
 
-    // FIXED: Calculate customer count via Customer queries instead of user.customers
     const assistantsWithMetrics = await Promise.all(
       assistants.map(async (assistant) => {
         const customerCount = await Customer.countDocuments({ assignedTo: assistant._id });
@@ -166,9 +163,9 @@ const getAssistantDetails = async (req, res) => {
       return res.status(404).json({ error: 'Assistant not found' });
     }
 
-    // FIXED: Get assigned customers via Customer query instead of populate
+    // Get assigned customers via Customer query
     const assignedCustomers = await Customer.find({ assignedTo: id })
-      .select('name email isActive');
+      .select('firstName lastName email isActive');
 
     const assistantWithCustomers = {
       ...assistant.toObject(),
@@ -257,7 +254,6 @@ const resetPassword = async (req, res) => {
     }
 
     const newPassword = generatePassword();
-    // FIXED: Remove manual hashing - let User model handle it
 
     assistant.password = newPassword; // Plain text password - User model will hash it
     assistant.mustChangePassword = true;
@@ -282,9 +278,9 @@ const getMyProfile = async (req, res) => {
       return res.status(404).json({ error: 'Profile not found' });
     }
 
-    // FIXED: Get assigned customers via Customer query instead of populate
+    // Get assigned customers via Customer query
     const assignedCustomers = await Customer.find({ assignedTo: req.user.id })
-      .select('name email isActive');
+      .select('firstName lastName email isActive');
 
     const profileWithCustomers = {
       ...assistant.toObject(),
@@ -332,7 +328,6 @@ const changeMyPassword = async (req, res) => {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
 
-    // FIXED: Remove manual hashing - let User model handle it
     user.password = newPassword; // Plain text password - User model will hash it
     user.mustChangePassword = false;
     await user.save();
@@ -355,7 +350,6 @@ const getAssistantPerformance = async (req, res) => {
       return res.status(404).json({ error: 'Assistant not found' });
     }
 
-    // FIXED: Calculate metrics via Customer queries instead of user.customers
     const totalCustomers = await Customer.countDocuments({ assignedTo: id });
     const activeCustomers = await Customer.countDocuments({
       assignedTo: id,
@@ -387,12 +381,24 @@ const getAssistantPerformance = async (req, res) => {
   }
 };
 
-// ===== BULK OPERATIONS =====
+// ===== BULK OPERATIONS WITH ASSISTANT VALIDATION =====
 const bulkAssignCustomers = async (req, res) => {
   try {
     const { assistantId, customerIds, action } = req.body;
 
-    // FIXED: Remove User.findByIdAndUpdate operations on non-existent customers array
+    // Validate assistant exists before assignment
+    if (action === 'assign' && assistantId) {
+      const assistant = await User.findById(assistantId);
+      if (!assistant || assistant.role !== 'assistant') {
+        return res.status(404).json({ error: 'Assistant not found' });
+      }
+      
+      // Check if assistant is active
+      if (!assistant.isActive) {
+        return res.status(400).json({ error: 'Cannot assign customers to inactive assistant' });
+      }
+    }
+
     if (action === 'assign') {
       await Customer.updateMany(
         { _id: { $in: customerIds } },
@@ -417,8 +423,24 @@ const reassignCustomers = async (req, res) => {
   try {
     const { fromAssistantId, toAssistantId, customerIds } = req.body;
 
-    // FIXED: Remove User.findByIdAndUpdate operations on non-existent customers array
-    // Simply update customer records with new assignment
+    // Validate both assistants exist
+    const fromAssistant = await User.findById(fromAssistantId);
+    const toAssistant = await User.findById(toAssistantId);
+
+    if (!fromAssistant || fromAssistant.role !== 'assistant') {
+      return res.status(404).json({ error: 'Source assistant not found' });
+    }
+
+    if (!toAssistant || toAssistant.role !== 'assistant') {
+      return res.status(404).json({ error: 'Target assistant not found' });
+    }
+
+    // Check if target assistant is active
+    if (!toAssistant.isActive) {
+      return res.status(400).json({ error: 'Cannot assign customers to inactive assistant' });
+    }
+
+    // Update customer records with new assignment
     await Customer.updateMany(
       { _id: { $in: customerIds } },
       { assignedTo: toAssistantId }
