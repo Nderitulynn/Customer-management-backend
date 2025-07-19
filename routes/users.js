@@ -2,145 +2,102 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 const { authenticate, authorize } = require('../middleware/auth');
-const ValidationMiddleware = require('../middleware/validation'); // Import the class
+const ValidationMiddleware = require('../middleware/validation');
 
 // Create an instance of ValidationMiddleware
 const validator = new ValidationMiddleware();
 
-// ===== BASE USERS ROUTE =====
+// ===== ADMIN-ONLY ROUTES =====
 
-// Get all users (admin only) - This handles /api/users
-router.get('/', 
-  authenticate,
-  authorize(['admin']),
-  userController.getAllUsers
-);
-
-// ===== ADMIN ROUTES =====
-
-// Register admin (one-time setup - no auth required)
-router.post('/admin/register', userController.registerAdmin);
-
-// Assistant management (admin only)
+// Create assistant (admin only)
 router.post('/assistants', 
   authenticate,
   authorize(['admin']), 
-  validator.validateRequest('assistant'), // Use the correct method
+  validator.validateRequest('assistant'),
   userController.createAssistant
 );
 
+// Get all assistants (admin only)
 router.get('/assistants', 
   authenticate,
   authorize(['admin']),
   userController.getAllAssistants
 );
 
-// NEW: Get available assistants for assignment
-router.get('/assistants/available', 
-  authenticate,
-  authorize(['admin']),
-  userController.getAvailableAssistants
-);
-
-// NEW: Get real workload calculation for assistants
-router.get('/assistants/workload', 
-  authenticate,
-  authorize(['admin']),
-  userController.getAssistantsWorkload
-);
-
+// Get specific assistant by ID (admin only)
 router.get('/assistants/:id', 
   authenticate,
   authorize(['admin']),
   userController.getAssistantDetails
 );
 
+// Update assistant (admin only)
 router.put('/assistants/:id', 
   authenticate,
   authorize(['admin']),
-  validator.validateRequest('assistant'), // Use the correct method
+  validator.validateRequest('profile'),
   userController.updateAssistant
 );
 
+// Delete assistant (admin only)
 router.delete('/assistants/:id', 
   authenticate,
   authorize(['admin']),
   userController.deleteAssistant
 );
 
-// Assistant status management (admin only)
-router.patch('/assistants/:id/toggle-status', 
+// Toggle assistant status (admin only)
+router.put('/assistants/:id/status', 
   authenticate,
   authorize(['admin']),
   userController.toggleAssistantStatus
 );
 
-router.patch('/assistants/:id/reset-password', 
+// Reset assistant password (admin only)
+router.put('/assistants/:id/reset-password', 
   authenticate,
   authorize(['admin']),
   userController.resetPassword
 );
 
-// Performance and analytics (admin only)
-router.get('/assistants/:id/performance', 
-  authenticate,
-  authorize(['admin']),
-  userController.getAssistantPerformance
-);
+// ===== SHARED ROUTES (ADMIN & ASSISTANT) =====
 
-// UPDATED: Bulk operations (admin only) - Fixed to use proper customer assignment
-router.post('/assistants/bulk-assign', 
-  authenticate,
-  authorize(['admin']),
-  userController.bulkAssignCustomers
-);
-
-router.post('/assistants/reassign', 
-  authenticate,
-  authorize(['admin']),
-  userController.reassignCustomers
-);
-
-// ===== ASSISTANT SELF-SERVICE ROUTES =====
-
-// Profile management (assistant only)
+// Get own profile (both roles)
 router.get('/profile', 
-  authenticate,
-  authorize(['assistant']),
-  userController.getMyProfile
-);
-
-router.put('/profile', 
-  authenticate,
-  authorize(['assistant']),
-  validator.validateRequest('profile'), // Updated validation for profile
-  userController.updateMyProfile
-);
-
-router.patch('/change-password', 
-  authenticate,
-  authorize(['assistant']),
-  validator.validateRequest('password'), // Added validation for password change
-  userController.changeMyPassword
-);
-
-// Assistant can view their own performance
-router.get('/my-performance', 
-  authenticate,
-  authorize(['assistant']),
-  (req, res) => {
-    req.params.id = req.user.id;
-    userController.getAssistantPerformance(req, res);
-  }
-);
-
-// ===== MIXED ACCESS ROUTES =====
-
-// Both admin and assistant can access these
-router.get('/me', 
   authenticate,
   authorize(['admin', 'assistant']),
   userController.getMyProfile
+);
+
+// Update own profile (both roles)
+router.put('/profile', 
+  authenticate,
+  authorize(['admin', 'assistant']),
+  validator.validateRequest('profile'),
+  userController.updateMyProfile
+);
+
+// Change own password (both roles)
+router.put('/change-password', 
+  authenticate,
+  authorize(['admin', 'assistant']),
+  userController.changeMyPassword
+);
+
+// ===== CUSTOMER ASSIGNMENT ROUTES (ADMIN ONLY) =====
+
+// Assign customer to assistant (admin only)
+router.put('/assign-customer', 
+  authenticate,
+  authorize(['admin']),
+  userController.assignCustomer
+);
+
+// Unassign customer from assistant (admin only)
+router.put('/unassign-customer', 
+  authenticate,
+  authorize(['admin']),
+  userController.unassignCustomer
 );
 
 module.exports = router;
