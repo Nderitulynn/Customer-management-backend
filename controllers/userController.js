@@ -1,7 +1,16 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Customer = require('../models/Customer');
-const { generatePassword, sendEmail } = require('../utils/helpers');
+
+// Generate simple random password
+const generateSimplePassword = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$';
+  let password = '';
+  for (let i = 0; i < 8; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+};
 
 // ===== ADMIN REGISTRATION (One-time setup) =====
 const registerAdmin = async (req, res) => {
@@ -11,20 +20,26 @@ const registerAdmin = async (req, res) => {
     // Check if admin already exists
     const existingAdmin = await User.findOne({ role: 'admin' });
     if (existingAdmin) {
-      return res.status(400).json({ error: 'Admin account already exists' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Admin account already exists' 
+      });
     }
 
     // Check if email exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email already exists' 
+      });
     }
 
     const admin = new User({
       firstName,
       lastName,
       email,
-      password, // Plain text password - User model will hash it
+      password,
       role: 'admin',
       isActive: true
     });
@@ -32,8 +47,9 @@ const registerAdmin = async (req, res) => {
     await admin.save();
 
     res.status(201).json({
+      success: true,
       message: 'Admin account created successfully',
-      admin: { 
+      data: { 
         id: admin._id, 
         firstName, 
         lastName, 
@@ -42,42 +58,34 @@ const registerAdmin = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
-// ===== GET ALL USERS (Admin Only) =====
+// ===== GET ALL USERS =====
 const getAllUsers = async (req, res) => {
   try {
     const users = await User.find({})
       .select('-password')
       .sort({ createdAt: -1 });
 
-    // Separate users by role for easier frontend consumption
-    const usersByRole = {
-      admins: users.filter(user => user.role === 'admin'),
-      assistants: users.filter(user => user.role === 'assistant')
-    };
-
     res.json({
       success: true,
-      data: {
-        users: users,
-        usersByRole: usersByRole,
-        totalUsers: users.length,
-        totalAdmins: usersByRole.admins.length,
-        totalAssistants: usersByRole.assistants.length
-      }
+      message: 'Users retrieved successfully',
+      data: users
     });
   } catch (error) {
     res.status(500).json({ 
       success: false, 
-      error: error.message 
+      message: error.message 
     });
   }
 };
 
-// ===== ASSISTANT CREATION & MANAGEMENT (Admin Only) =====
+// ===== CREATE ASSISTANT =====
 const createAssistant = async (req, res) => {
   try {
     const { firstName, lastName, email } = req.body;
@@ -85,17 +93,20 @@ const createAssistant = async (req, res) => {
     // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email already exists' 
+      });
     }
 
     // Generate temporary password
-    const tempPassword = generatePassword();
+    const tempPassword = generateSimplePassword();
 
     const assistant = new User({
       firstName,
       lastName,
       email,
-      password: tempPassword, // Plain text password - User model will hash it
+      password: tempPassword,
       role: 'assistant',
       isActive: true,
       mustChangePassword: true,
@@ -104,80 +115,80 @@ const createAssistant = async (req, res) => {
 
     await assistant.save();
 
-    // Send credentials email
-    await sendEmail(email, 'Account Created', 
-      `Your account has been created. Password: ${tempPassword}. Please change your password after first login.`);
-
     res.status(201).json({
+      success: true,
       message: 'Assistant created successfully',
-      assistant: { 
+      data: { 
         id: assistant._id, 
         firstName, 
         lastName, 
         email, 
-        role: assistant.role 
+        role: assistant.role,
+        tempPassword: tempPassword // Show password to admin
       }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
+// ===== GET ALL ASSISTANTS =====
 const getAllAssistants = async (req, res) => {
   try {
     const assistants = await User.find({ role: 'assistant' })
       .select('-password')
       .sort({ createdAt: -1 });
 
-    const assistantsWithMetrics = await Promise.all(
-      assistants.map(async (assistant) => {
-        const customerCount = await Customer.countDocuments({ assignedTo: assistant._id });
-        
-        return {
-          id: assistant._id,
-          firstName: assistant.firstName,
-          lastName: assistant.lastName,
-          email: assistant.email,
-          isActive: assistant.isActive,
-          customerCount: customerCount,
-          lastLogin: assistant.lastLogin,
-          mustChangePassword: assistant.mustChangePassword
-        };
-      })
-    );
-
-    res.json(assistantsWithMetrics);
+    res.json({
+      success: true,
+      message: 'Assistants retrieved successfully',
+      data: assistants
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
+// ===== GET ASSISTANT DETAILS =====
 const getAssistantDetails = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const assistant = await User.findById(id)
-      .select('-password');
-
+    const assistant = await User.findById(id).select('-password');
     if (!assistant || assistant.role !== 'assistant') {
-      return res.status(404).json({ error: 'Assistant not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Assistant not found' 
+      });
     }
 
-    // Get assigned customers via Customer query
+    // Get assigned customers
     const assignedCustomers = await Customer.find({ assignedTo: id })
       .select('firstName lastName email isActive');
 
-    const assistantWithCustomers = {
-      ...assistant.toObject(),
-      customers: assignedCustomers
-    };
-
-    res.json(assistantWithCustomers);
+    res.json({
+      success: true,
+      message: 'Assistant details retrieved successfully',
+      data: {
+        ...assistant.toObject(),
+        customers: assignedCustomers
+      }
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
+// ===== UPDATE ASSISTANT =====
 const updateAssistant = async (req, res) => {
   try {
     const { id } = req.params;
@@ -190,22 +201,36 @@ const updateAssistant = async (req, res) => {
     );
 
     if (!assistant || assistant.role !== 'assistant') {
-      return res.status(404).json({ error: 'Assistant not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Assistant not found' 
+      });
     }
 
-    res.json({ message: 'Assistant updated successfully', assistant });
+    res.json({ 
+      success: true, 
+      message: 'Assistant updated successfully', 
+      data: assistant 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
+// ===== DELETE ASSISTANT =====
 const deleteAssistant = async (req, res) => {
   try {
     const { id } = req.params;
     
     const assistant = await User.findById(id);
     if (!assistant || assistant.role !== 'assistant') {
-      return res.status(404).json({ error: 'Assistant not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Assistant not found' 
+      });
     }
 
     // Unassign all customers before deleting
@@ -216,80 +241,111 @@ const deleteAssistant = async (req, res) => {
 
     await User.findByIdAndDelete(id);
 
-    res.json({ message: 'Assistant deleted successfully' });
+    res.json({ 
+      success: true, 
+      message: 'Assistant deleted successfully' 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
-// ===== ASSISTANT ACCOUNT STATUS MANAGEMENT =====
+// ===== TOGGLE ASSISTANT STATUS =====
 const toggleAssistantStatus = async (req, res) => {
   try {
     const { id } = req.params;
     
     const assistant = await User.findById(id);
     if (!assistant || assistant.role !== 'assistant') {
-      return res.status(404).json({ error: 'Assistant not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Assistant not found' 
+      });
     }
 
     assistant.isActive = !assistant.isActive;
     await assistant.save();
 
     res.json({ 
-      message: `Assistant ${assistant.isActive ? 'activated' : 'deactivated'}`,
-      isActive: assistant.isActive 
+      success: true,
+      message: `Assistant ${assistant.isActive ? 'activated' : 'deactivated'} successfully`,
+      data: { isActive: assistant.isActive }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
+// ===== RESET PASSWORD =====
 const resetPassword = async (req, res) => {
   try {
     const { id } = req.params;
     
     const assistant = await User.findById(id);
     if (!assistant || assistant.role !== 'assistant') {
-      return res.status(404).json({ error: 'Assistant not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Assistant not found' 
+      });
     }
 
-    const newPassword = generatePassword();
+    // Generate new password
+    const newPassword = generateSimplePassword();
 
-    assistant.password = newPassword; // Plain text password - User model will hash it
+    assistant.password = newPassword;
     assistant.mustChangePassword = true;
     await assistant.save();
 
-    await sendEmail(assistant.email, 'Password Reset', 
-      `Your new password: ${newPassword}. Please change it after login.`);
-
-    res.json({ message: 'Password reset successfully' });
+    res.json({ 
+      success: true,
+      message: 'Password reset successfully',
+      data: {
+        email: assistant.email,
+        newPassword: newPassword // Show new password to admin
+      }
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
-// ===== ASSISTANT SELF-SERVICE METHODS =====
+// ===== ASSISTANT SELF-SERVICE =====
 const getMyProfile = async (req, res) => {
   try {
-    const assistant = await User.findById(req.user.id)
-      .select('-password');
-
+    const assistant = await User.findById(req.user.id).select('-password');
     if (!assistant) {
-      return res.status(404).json({ error: 'Profile not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Profile not found' 
+      });
     }
 
-    // Get assigned customers via Customer query
+    // Get assigned customers
     const assignedCustomers = await Customer.find({ assignedTo: req.user.id })
       .select('firstName lastName email isActive');
 
-    const profileWithCustomers = {
-      ...assistant.toObject(),
-      customers: assignedCustomers
-    };
-
-    res.json(profileWithCustomers);
+    res.json({
+      success: true,
+      message: 'Profile retrieved successfully',
+      data: {
+        ...assistant.toObject(),
+        customers: assignedCustomers
+      }
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
@@ -304,12 +360,22 @@ const updateMyProfile = async (req, res) => {
     );
 
     if (!assistant) {
-      return res.status(404).json({ error: 'Profile not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Profile not found' 
+      });
     }
 
-    res.json({ message: 'Profile updated successfully', assistant });
+    res.json({ 
+      success: true, 
+      message: 'Profile updated successfully', 
+      data: assistant 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
@@ -317,138 +383,122 @@ const changeMyPassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     
+    // Basic password validation
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'New password must be at least 6 characters long' 
+      });
+    }
+    
     const user = await User.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
     }
 
     // Verify current password
     const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
     if (!isCurrentPasswordValid) {
-      return res.status(400).json({ error: 'Current password is incorrect' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Current password is incorrect' 
+      });
     }
 
-    user.password = newPassword; // Plain text password - User model will hash it
+    user.password = newPassword;
     user.mustChangePassword = false;
     await user.save();
 
-    res.json({ message: 'Password changed successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// ===== PERFORMANCE & ANALYTICS =====
-const getAssistantPerformance = async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const assistant = await User.findById(id)
-      .select('-password');
-
-    if (!assistant) {
-      return res.status(404).json({ error: 'Assistant not found' });
-    }
-
-    const totalCustomers = await Customer.countDocuments({ assignedTo: id });
-    const activeCustomers = await Customer.countDocuments({
-      assignedTo: id,
-      isActive: true
+    res.json({ 
+      success: true, 
+      message: 'Password changed successfully' 
     });
-
-    // Mock performance data (replace with actual metrics)
-    const metrics = {
-      assistant: {
-        firstName: assistant.firstName,
-        lastName: assistant.lastName,
-        email: assistant.email,
-        isActive: assistant.isActive
-      },
-      workload: {
-        totalCustomers,
-        activeCustomers
-      },
-      performance: {
-        responseTime: '2.3 hours avg',
-        satisfactionRate: '94%',
-        ticketsResolved: 156
-      }
-    };
-
-    res.json(metrics);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
-// ===== BULK OPERATIONS WITH ASSISTANT VALIDATION =====
-const bulkAssignCustomers = async (req, res) => {
+// ===== CUSTOMER ASSIGNMENT =====
+const assignCustomer = async (req, res) => {
   try {
-    const { assistantId, customerIds, action } = req.body;
+    const { customerId, assistantId } = req.body;
 
-    // Validate assistant exists before assignment
-    if (action === 'assign' && assistantId) {
-      const assistant = await User.findById(assistantId);
-      if (!assistant || assistant.role !== 'assistant') {
-        return res.status(404).json({ error: 'Assistant not found' });
-      }
-      
-      // Check if assistant is active
-      if (!assistant.isActive) {
-        return res.status(400).json({ error: 'Cannot assign customers to inactive assistant' });
-      }
+    // Validate assistant exists and is active
+    const assistant = await User.findById(assistantId);
+    if (!assistant || assistant.role !== 'assistant') {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Assistant not found' 
+      });
+    }
+    
+    if (!assistant.isActive) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot assign customer to inactive assistant' 
+      });
     }
 
-    if (action === 'assign') {
-      await Customer.updateMany(
-        { _id: { $in: customerIds } },
-        { assignedTo: assistantId }
-      );
-    } else if (action === 'unassign') {
-      await Customer.updateMany(
-        { _id: { $in: customerIds } },
-        { $unset: { assignedTo: 1 } }
-      );
+    // Update customer assignment
+    const customer = await Customer.findByIdAndUpdate(
+      customerId,
+      { assignedTo: assistantId },
+      { new: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Customer not found' 
+      });
     }
 
     res.json({ 
-      message: `${customerIds.length} customers ${action}ed successfully` 
+      success: true, 
+      message: 'Customer assigned successfully',
+      data: customer
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
-const reassignCustomers = async (req, res) => {
+const unassignCustomer = async (req, res) => {
   try {
-    const { fromAssistantId, toAssistantId, customerIds } = req.body;
+    const { customerId } = req.body;
 
-    // Validate both assistants exist
-    const fromAssistant = await User.findById(fromAssistantId);
-    const toAssistant = await User.findById(toAssistantId);
-
-    if (!fromAssistant || fromAssistant.role !== 'assistant') {
-      return res.status(404).json({ error: 'Source assistant not found' });
-    }
-
-    if (!toAssistant || toAssistant.role !== 'assistant') {
-      return res.status(404).json({ error: 'Target assistant not found' });
-    }
-
-    // Check if target assistant is active
-    if (!toAssistant.isActive) {
-      return res.status(400).json({ error: 'Cannot assign customers to inactive assistant' });
-    }
-
-    // Update customer records with new assignment
-    await Customer.updateMany(
-      { _id: { $in: customerIds } },
-      { assignedTo: toAssistantId }
+    const customer = await Customer.findByIdAndUpdate(
+      customerId,
+      { $unset: { assignedTo: 1 } },
+      { new: true }
     );
 
-    res.json({ message: 'Customers reassigned successfully' });
+    if (!customer) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Customer not found' 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Customer unassigned successfully',
+      data: customer
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
 
@@ -466,7 +516,6 @@ module.exports = {
   getMyProfile,
   updateMyProfile,
   changeMyPassword,
-  getAssistantPerformance,
-  bulkAssignCustomers,
-  reassignCustomers
+  assignCustomer,
+  unassignCustomer
 };
