@@ -74,7 +74,7 @@ class CustomerController {
         filter.assignedTo = req.user._id;
       }
       
-      // Basic search functionality
+      // Basic search functionality - includes fullName
       if (search) {
         filter.$or = [
           { fullName: { $regex: search, $options: 'i' } },
@@ -386,7 +386,7 @@ class CustomerController {
     }
   }
 
-  // Get recent customers for dashboard
+  // Get recent customers for dashboard - Updated to ensure fullName is included
   async getRecentCustomers(req, res) {
     try {
       const { limit = 10 } = req.query;
@@ -401,7 +401,7 @@ class CustomerController {
         .sort({ createdAt: -1 })
         .limit(parseInt(limit))
         .populate('assignedTo', 'firstName lastName')
-        .select('fullName email phone status createdAt');
+        .select('fullName email phone status createdAt assignedTo');
 
       res.json({
         success: true,
