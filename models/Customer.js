@@ -2,18 +2,13 @@
 const mongoose = require('mongoose');
 
 const customerSchema = new mongoose.Schema({
-  // Basic Information - Updated to match User model naming
-  firstName: {
+  // Basic Information - Updated to use single fullName field
+  fullName: {
     type: String,
-    required: [true, 'First name is required'],
+    required: [true, 'Full name is required'],
     trim: true,
-    maxlength: [50, 'First name cannot exceed 50 characters']
-  },
-  lastName: {
-    type: String,
-    required: [true, 'Last name is required'],
-    trim: true,
-    maxlength: [50, 'Last name cannot exceed 50 characters']
+    maxlength: [100, 'Full name cannot exceed 100 characters'],
+    minlength: [2, 'Full name must be at least 2 characters']
   },
   email: {
     type: String,
@@ -112,16 +107,11 @@ const customerSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Virtual for full name - matches User model pattern
-customerSchema.virtual('fullName').get(function() {
-  return `${this.firstName} ${this.lastName}`;
-});
-
-// Basic Indexes
+// Basic Indexes - Updated to use fullName instead of firstName/lastName
 customerSchema.index({ email: 1 });
 customerSchema.index({ phone: 1 });
 customerSchema.index({ isActive: 1 });
 customerSchema.index({ assignedTo: 1 });
-customerSchema.index({ firstName: 'text', lastName: 'text' });
+customerSchema.index({ fullName: 'text' }); // Updated text index
 
 module.exports = mongoose.model('Customer', customerSchema);
