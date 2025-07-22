@@ -7,7 +7,22 @@ const ValidationMiddleware = require('../middleware/validation');
 // Create an instance of ValidationMiddleware
 const validator = new ValidationMiddleware();
 
-// ===== ADMIN-ONLY ROUTES =====
+// ===== ADMIN SETUP ROUTES =====
+
+// Register admin (one-time setup, unprotected)
+router.post('/register-admin', 
+  validator.validateRequest('admin'),
+  userController.registerAdmin
+);
+
+// Get all users (admin only - for debugging/management)
+router.get('/', 
+  authenticate,
+  authorize(['admin']),
+  userController.getAllUsers
+);
+
+// ===== ASSISTANT MANAGEMENT ROUTES (ADMIN ONLY) =====
 
 // Create assistant (admin only)
 router.post('/assistants', 
@@ -60,7 +75,7 @@ router.put('/assistants/:id/reset-password',
   userController.resetPassword
 );
 
-// ===== SHARED ROUTES (ADMIN & ASSISTANT) =====
+// ===== PROFILE ROUTES (ADMIN & ASSISTANT) =====
 
 // Get own profile (both roles)
 router.get('/profile', 
@@ -81,6 +96,7 @@ router.put('/profile',
 router.put('/change-password', 
   authenticate,
   authorize(['admin', 'assistant']),
+  validator.validateRequest('changePassword'),
   userController.changeMyPassword
 );
 
@@ -90,6 +106,7 @@ router.put('/change-password',
 router.put('/assign-customer', 
   authenticate,
   authorize(['admin']),
+  validator.validateRequest('assignCustomer'),
   userController.assignCustomer
 );
 
@@ -97,6 +114,7 @@ router.put('/assign-customer',
 router.put('/unassign-customer', 
   authenticate,
   authorize(['admin']),
+  validator.validateRequest('unassignCustomer'),
   userController.unassignCustomer
 );
 
