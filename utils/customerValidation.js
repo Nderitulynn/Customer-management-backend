@@ -1,39 +1,68 @@
 const VALIDATION_RULES = {
   ADMIN: {
-    required: ['name', 'email', 'phone'],
+    required: ['fullName', 'email', 'phone'],
     optional: ['address', 'notes', 'status', 'totalSpent']
   },
   ASSISTANT: {
-    required: ['name', 'email', 'phone'],
+    required: ['fullName', 'email', 'phone'],
     optional: ['address', 'notes', 'status']
   }
 };
 
-function validateCustomerCreation(data) {
+function validateCustomer(data, isUpdate = false) {
   const errors = [];
   
   if (!data || typeof data !== 'object') {
-    return { isValid: false, errors: ['Invalid data format'] };
+    return ['Invalid data format'];
   }
 
-  // Check required fields
-  const required = ['name', 'email', 'phone'];
-  required.forEach(field => {
-    if (!data[field] || typeof data[field] !== 'string' || data[field].trim() === '') {
-      errors.push(`${field} is required`);
+  // For creation, check required fields
+  if (!isUpdate) {
+    const required = ['fullName', 'email', 'phone'];
+    required.forEach(field => {
+      if (!data[field] || typeof data[field] !== 'string' || data[field].trim() === '') {
+        errors.push(`${field} is required`);
+      }
+    });
+  } else {
+    // For updates, only validate fields that are present
+    if (data.fullName !== undefined) {
+      if (!data.fullName || typeof data.fullName !== 'string' || data.fullName.trim() === '') {
+        errors.push('fullName cannot be empty');
+      }
     }
-  });
+  }
 
-  // Validate email format
+  // Validate email format if provided
   if (data.email && !validateEmail(data.email)) {
     errors.push('Invalid email format');
   }
 
-  // Validate phone format
+  // Validate phone format if provided
   if (data.phone && !validateKenyanPhone(data.phone)) {
     errors.push('Invalid Kenyan phone number format');
   }
 
+  // Validate fullName length and format if provided
+  if (data.fullName) {
+    if (data.fullName.length < 2) {
+      errors.push('Full name must be at least 2 characters long');
+    }
+    if (data.fullName.length > 100) {
+      errors.push('Full name must not exceed 100 characters');
+    }
+    // Check for valid name format (letters, spaces, hyphens, apostrophes)
+    if (!/^[a-zA-Z\s\-']+$/.test(data.fullName)) {
+      errors.push('Full name can only contain letters, spaces, hyphens, and apostrophes');
+    }
+  }
+
+  return errors;
+}
+
+function validateCustomerCreation(data) {
+  const errors = validateCustomer(data, false);
+  
   return {
     isValid: errors.length === 0,
     errors: errors
@@ -60,15 +89,9 @@ function validateCustomerUpdate(data, userRole) {
     }
   });
 
-  // Validate email if provided
-  if (data.email && !validateEmail(data.email)) {
-    errors.push('Invalid email format');
-  }
-
-  // Validate phone if provided
-  if (data.phone && !validateKenyanPhone(data.phone)) {
-    errors.push('Invalid Kenyan phone number format');
-  }
+  // Use the main validateCustomer function for field validation
+  const fieldErrors = validateCustomer(data, true);
+  errors.push(...fieldErrors);
 
   return {
     isValid: errors.length === 0,
@@ -99,6 +122,14 @@ function sanitizeCustomerInput(data) {
           return escapeMap[match];
         })
         .trim();
+      
+      // Special handling for fullName - proper case formatting
+      if (key === 'fullName' && sanitized[key]) {
+        sanitized[key] = sanitized[key]
+          .split(' ')
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+          .join(' ');
+      }
     } else {
       sanitized[key] = data[key];
     }
@@ -127,14 +158,14 @@ function validateEmail(email) {
   }
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+  return emailRegex.test(email) && email.length <= 254; // RFC 5321 limit
 }
 
 function validateRequiredFields(data, operation) {
   const errors = [];
   
   if (operation === 'create') {
-    const required = ['name', 'email', 'phone'];
+    const required = ['fullName', 'email', 'phone'];
     required.forEach(field => {
       if (!data[field] || typeof data[field] !== 'string' || data[field].trim() === '') {
         errors.push(`${field} is required for customer creation`);
@@ -156,7 +187,28 @@ function formatValidationError(errors) {
   return errors.join(', ');
 }
 
+// Additional utility function to validate customer status
+function validateCustomerStatus(status) {
+  const validStatuses = ['active', 'inactive', 'pending', 'suspended'];
+  return validStatuses.includes(status);
+}
+
+// Utility function to normalize fullName
+function normalizeFullName(fullName) {
+  if (!fullName || typeof fullName !== 'string') {
+    return '';
+  }
+  
+  return fullName
+    .trim()
+    .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
 module.exports = {
+  validateCustomer,
   validateCustomerCreation,
   validateCustomerUpdate,
   sanitizeCustomerInput,
@@ -164,5 +216,7 @@ module.exports = {
   validateEmail,
   validateRequiredFields,
   formatValidationError,
+  validateCustomerStatus,
+  normalizeFullName,
   VALIDATION_RULES
 };
