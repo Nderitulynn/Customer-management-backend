@@ -73,13 +73,19 @@ class ValidationMiddleware {
       throw new Error('Names can only contain letters and spaces');
     }
     
-    return {
-      email: this.sanitize(data.email.toLowerCase().trim()),
-      password: data.password,
-      firstName: this.sanitize(data.firstName.trim()),
-      lastName: this.sanitize(data.lastName.trim()),
-      role: USER_ROLES.ASSISTANT
-    };
+   const validated = {
+  email: this.sanitize(data.email.toLowerCase().trim()),
+  firstName: this.sanitize(data.firstName.trim()),
+  lastName: this.sanitize(data.lastName.trim()),
+  role: USER_ROLES.ASSISTANT
+};
+
+// Include password if provided, otherwise backend will generate one
+if (data.password && data.password.trim()) {
+  validated.password = data.password.trim();
+}
+
+return validated;
   }
 
   validateAssistant(data, currentUserRole) {
@@ -228,9 +234,10 @@ class ValidationMiddleware {
       }
     }
     
-    // Add ownership for assistants
+    // Add receivedBy for currently logged-in assistant
     if (currentUserRole === USER_ROLES.ASSISTANT) {
-      validated.createdBy = assistantId;
+      validated.receivedBy = assistantId;
+      validated.receivedAt = new Date();
     }
     
     return validated;

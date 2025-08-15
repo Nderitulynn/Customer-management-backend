@@ -9,7 +9,8 @@ const {
   changePassword,
   refreshToken,
   logout,
-  verifyToken  // ADD THIS IMPORT
+  verifyToken,
+  registerCustomer  // ADD THIS IMPORT
 } = require('../controllers/authController');
 const {
   authenticate,
@@ -18,8 +19,27 @@ const {
 
 const router = express.Router();
 
-// Validation middleware
+// Validation middleware for admin/staff registration
 const registerValidation = [
+  body('email')
+    .isEmail()
+    .withMessage('Please enter a valid email')
+    .normalizeEmail(),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters'),
+  body('firstName')
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be between 2 and 50 characters')
+    .trim(),
+  body('lastName')
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be between 2 and 50 characters')
+    .trim()
+];
+
+// Validation middleware for customer registration
+const customerRegisterValidation = [
   body('email')
     .isEmail()
     .withMessage('Please enter a valid email')
@@ -49,6 +69,7 @@ const loginValidation = [
 
 // Routes
 router.post('/register', registerValidation, register);
+router.post('/register-customer', customerRegisterValidation, registerCustomer);
 router.post('/login', loginValidation, login);
 router.post('/logout', authenticate, logout);
 router.post('/refresh', authenticate, refreshToken);

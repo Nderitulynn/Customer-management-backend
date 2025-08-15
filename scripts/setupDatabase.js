@@ -1,15 +1,16 @@
 const { MongoClient } = require('mongodb');
 require('dotenv').config();
 
-// Collection names array
+// Collection names array - Updated to include messages and remove whatsapp_chats
 const COLLECTIONS = [
   'users',
   'customers', 
   'orders',
-  'whatsapp_chats',
+  'messages',      // ADDED: Messages collection for customer-assistant communication
   'notifications',
   'financial_data',
-  'analytics'
+  'analytics',
+  'system_settings'  // For assignment tracking and other settings
 ];
 
 // Index definitions for each collection
@@ -21,7 +22,8 @@ const INDEX_DEFINITIONS = {
   customers: [
     { key: { phone: 1 }, options: {} },
     { key: { email: 1 }, options: {} },
-    { key: { createdAt: 1 }, options: {} }
+    { key: { createdAt: 1 }, options: {} },
+    { key: { assignedAssistantId: 1 }, options: {} }  // ADDED: For assistant assignment
   ],
   orders: [
     { key: { customerId: 1 }, options: {} },
@@ -29,10 +31,34 @@ const INDEX_DEFINITIONS = {
     { key: { createdAt: 1 }, options: {} },
     { key: { orderNumber: 1 }, options: { unique: true } }
   ],
-  whatsapp_chats: [
-    { key: { customerId: 1 }, options: {} },
-    { key: { assignedTo: 1 }, options: {} },
-    { key: { timestamp: 1 }, options: {} }
+  messages: [
+    // Core access patterns
+    { key: { customerId: 1 }, options: {} },                    // Customer dashboard queries
+    { key: { assistantId: 1 }, options: {} },                   // Assistant dashboard queries
+    { key: { parentMessageId: 1 }, options: {} },               // Threading/replies
+    
+    // Status and filtering
+    { key: { status: 1 }, options: {} },                        // Filter by read/unread
+    { key: { priority: 1 }, options: {} },                      // Filter by priority
+    { key: { messageType: 1 }, options: {} },                   // Filter initial vs replies
+    
+    // Time-based queries
+    { key: { createdAt: 1 }, options: {} },                     // Chronological sorting
+    { key: { updatedAt: 1 }, options: {} },                     // Recently updated
+    { key: { readAt: 1 }, options: {} },                        // Read tracking
+    
+    // Compound indexes for common query patterns
+    { key: { customerId: 1, status: 1 }, options: {} },         // Customer's unread messages
+    { key: { assistantId: 1, status: 1 }, options: {} },        // Assistant's unread messages
+    { key: { customerId: 1, createdAt: -1 }, options: {} },     // Customer's recent messages
+    { key: { assistantId: 1, createdAt: -1 }, options: {} },    // Assistant's recent messages
+    { key: { parentMessageId: 1, createdAt: 1 }, options: {} }, // Thread chronology
+    
+    // Search functionality
+    { key: { subject: 'text', content: 'text' }, options: { name: 'message_text_search' } }  // Full-text search
+  ],
+  system_settings: [
+    { key: { key: 1 }, options: { unique: true } }  // For key-value pairs
   ]
 };
 
@@ -97,7 +123,7 @@ async function setupDatabase() {
       for (const indexDef of INDEX_DEFINITIONS.customers) {
         await customersCollection.createIndex(indexDef.key, indexDef.options);
       }
-      console.log('✅ Customers indexes created (phone, email, createdAt)');
+      console.log('✅ Customers indexes created (phone, email, createdAt, assignedAssistantId)');
     } catch (error) {
       if (error.code !== 85) {
         console.log(`⚠️  Customers indexes: ${error.message}`);
@@ -121,18 +147,38 @@ async function setupDatabase() {
       }
     }
     
-    // WhatsApp chats collection indexes
+    // Messages collection indexes - NEW
     try {
-      const whatsappCollection = db.collection('whatsapp_chats');
-      for (const indexDef of INDEX_DEFINITIONS.whatsapp_chats) {
-        await whatsappCollection.createIndex(indexDef.key, indexDef.options);
+      const messagesCollection = db.collection('messages');
+      for (const indexDef of INDEX_DEFINITIONS.messages) {
+        await messagesCollection.createIndex(indexDef.key, indexDef.options);
       }
-      console.log('✅ WhatsApp chats indexes created (customerId, assignedTo, timestamp)');
+      console.log('✅ Messages indexes created:');
+      console.log('   📧 Core access: customerId, assistantId, parentMessageId');
+      console.log('   🏷️  Filtering: status, priority, messageType');
+      console.log('   ⏰ Time-based: createdAt, updatedAt, readAt');
+      console.log('   🔍 Compound: customer+status, assistant+status, thread chronology');
+      console.log('   🔎 Full-text search: subject and content');
     } catch (error) {
       if (error.code !== 85) {
-        console.log(`⚠️  WhatsApp chats indexes: ${error.message}`);
+        console.log(`⚠️  Messages indexes: ${error.message}`);
       } else {
-        console.log('ℹ️  WhatsApp chats indexes already exist');
+        console.log('ℹ️  Messages indexes already exist');
+      }
+    }
+    
+    // System settings collection indexes
+    try {
+      const settingsCollection = db.collection('system_settings');
+      for (const indexDef of INDEX_DEFINITIONS.system_settings) {
+        await settingsCollection.createIndex(indexDef.key, indexDef.options);
+      }
+      console.log('✅ System settings indexes created (key - unique)');
+    } catch (error) {
+      if (error.code !== 85) {
+        console.log(`⚠️  System settings indexes: ${error.message}`);
+      } else {
+        console.log('ℹ️  System settings indexes already exist');
       }
     }
     
@@ -141,7 +187,19 @@ async function setupDatabase() {
     console.log('📊 Database: customer-management');
     console.log('🗂️  Collections created: ' + COLLECTIONS.length);
     console.log('🔗 MongoDB URI: ' + process.env.MONGODB_URI.replace(/\/\/.*@/, '//***:***@'));
+    
+    console.log('\n📋 Collections Summary:');
+    console.log('   ✅ users - User authentication and roles');
+    console.log('   ✅ customers - Customer information and assistant assignments');
+    console.log('   ✅ orders - Order management');
+    console.log('   ✅ messages - Customer-assistant messaging system');
+    console.log('   ✅ notifications - System notifications');
+    console.log('   ✅ financial_data - Financial information');
+    console.log('   ✅ analytics - Analytics and reporting');
+    console.log('   ✅ system_settings - System configuration');
+    
     console.log('\n✨ You can now check MongoDB Compass to see your collections!');
+    console.log('🚀 Ready for messaging system implementation');
     
   } catch (error) {
     console.error('❌ Database setup failed:');

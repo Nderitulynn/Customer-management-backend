@@ -1,17 +1,17 @@
 const { body, validationResult } = require('express-validator');
 const Customer = require('../models/Customer');
-const AssignmentAudit = require('../models/AssignmentAudit');
 const User = require('../models/User');
 
 /**
- * Assignment Validation Middleware
- * Handles customer assignment business rules and validation
+ * Customer Receipt Validation Middleware
+ * Handles customer receipt business rules and validation
+ * (Replaced assignment system with automatic receipt by logged-in assistant)
  */
 
 /**
- * Validate that customer is unassigned before claiming
+ * Validate that customer can be received by current assistant
  */
-const validateCustomerUnassigned = async (req, res, next) => {
+const validateCustomerReceipt = async (req, res, next) => {
   try {
     const { customerId } = req.params;
     
@@ -31,13 +31,13 @@ const validateCustomerUnassigned = async (req, res, next) => {
       });
     }
 
-    // Check if customer is already assigned
-    if (customer.assignedTo && customer.assignmentStatus === 'assigned') {
+    // Check if customer is already received by another assistant
+    if (customer.receivedBy && customer.receivedBy.toString() !== req.user.id) {
       return res.status(400).json({
         success: false,
-        message: 'Customer is already assigned to another assistant',
-        assignedTo: customer.assignedTo,
-        assignedAt: customer.assignedAt
+        message: 'Customer is already being handled by another assistant',
+        receivedBy: customer.receivedBy,
+        receivedAt: customer.receivedAt
       });
     }
 
@@ -45,18 +45,18 @@ const validateCustomerUnassigned = async (req, res, next) => {
     req.customer = customer;
     next();
   } catch (error) {
-    console.error('Error validating customer assignment status:', error);
+    console.error('Error validating customer receipt status:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error during assignment validation'
+      message: 'Internal server error during receipt validation'
     });
   }
 };
 
 /**
- * Check assistant permissions for claiming customers
+ * Check assistant permissions for receiving customers
  */
-const validateAssistantClaimPermissions = async (req, res, next) => {
+const validateAssistantReceiptPermissions = async (req, res, next) => {
   try {
     const userId = req.user.id;
     const user = await User.findById(userId);
@@ -72,7 +72,7 @@ const validateAssistantClaimPermissions = async (req, res, next) => {
     if (user.role !== 'assistant') {
       return res.status(403).json({
         success: false,
-        message: 'Only assistants can claim customers'
+        message: 'Only assistants can receive customers'
       });
     }
 
@@ -85,32 +85,31 @@ const validateAssistantClaimPermissions = async (req, res, next) => {
     }
 
     // Check if assistant has reached maximum customer limit (if applicable)
-    const assignedCustomersCount = await Customer.countDocuments({
-      assignedTo: userId,
-      assignmentStatus: 'assigned'
+    const receivedCustomersCount = await Customer.countDocuments({
+      receivedBy: userId
     });
 
     const maxCustomersLimit = user.maxCustomersLimit || 50; // Default limit
     
-    if (assignedCustomersCount >= maxCustomersLimit) {
+    if (receivedCustomersCount >= maxCustomersLimit) {
       return res.status(403).json({
         success: false,
-        message: `Cannot claim customer. Maximum limit of ${maxCustomersLimit} customers reached`,
-        currentAssignments: assignedCustomersCount
+        message: `Cannot receive customer. Maximum limit of ${maxCustomersLimit} customers reached`,
+        currentReceipts: receivedCustomersCount
       });
     }
 
-    // Check if assistant has claim permissions
-    if (user.permissions && !user.permissions.includes('claim_customers')) {
+    // Check if assistant has receipt permissions
+    if (user.permissions && !user.permissions.includes('receive_customers')) {
       return res.status(403).json({
         success: false,
-        message: 'Assistant does not have permission to claim customers'
+        message: 'Assistant does not have permission to receive customers'
       });
     }
 
     next();
   } catch (error) {
-    console.error('Error validating assistant claim permissions:', error);
+    console.error('Error validating assistant receipt permissions:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error during permission validation'
@@ -119,108 +118,9 @@ const validateAssistantClaimPermissions = async (req, res, next) => {
 };
 
 /**
- * Prevent assistants from unclaiming customers
+ * Validate customer transfer (when transferring between assistants)
  */
-const preventAssistantUnclaim = async (req, res, next) => {
-  try {
-    const userId = req.user.id;
-    const user = await User.findById(userId);
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // If user is an assistant, prevent unclaiming
-    if (user.role === 'assistant') {
-      return res.status(403).json({
-        success: false,
-        message: 'Assistants cannot unclaim customers. Please contact a supervisor or manager.'
-      });
-    }
-
-    // Allow supervisors and managers to unclaim
-    if (!['supervisor', 'manager', 'admin'].includes(user.role)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Insufficient permissions to unclaim customers'
-      });
-    }
-
-    next();
-  } catch (error) {
-    console.error('Error validating unclaim permissions:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error during unclaim validation'
-    });
-  }
-};
-
-/**
- * Validate assignment action and log audit trail
- */
-const validateAndLogAssignment = async (req, res, next) => {
-  try {
-    const { customerId } = req.params;
-    const { action } = req.body; // 'claim' or 'unclaim'
-    const userId = req.user.id;
-
-    if (!['claim', 'unclaim'].includes(action)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid action. Must be either "claim" or "unclaim"'
-      });
-    }
-
-    // Get customer and previous assignment info
-    const customer = req.customer || await Customer.findById(customerId);
-    const previousAssignment = {
-      assignedTo: customer.assignedTo,
-      assignmentStatus: customer.assignmentStatus,
-      assignedAt: customer.assignedAt
-    };
-
-    // Create audit log entry
-    const auditEntry = new AssignmentAudit({
-      customerId: customerId,
-      actionBy: userId,
-      action: action,
-      previousAssignment: previousAssignment,
-      newAssignment: action === 'claim' ? {
-        assignedTo: userId,
-        assignmentStatus: 'assigned',
-        assignedAt: new Date()
-      } : {
-        assignedTo: null,
-        assignmentStatus: 'unassigned',
-        assignedAt: null
-      },
-      timestamp: new Date(),
-      ipAddress: req.ip,
-      userAgent: req.get('User-Agent')
-    });
-
-    await auditEntry.save();
-
-    // Attach audit entry to request for potential use in controller
-    req.auditEntry = auditEntry;
-    next();
-  } catch (error) {
-    console.error('Error logging assignment audit:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error during audit logging'
-    });
-  }
-};
-
-/**
- * Validate assignment transfer (when transferring between assistants)
- */
-const validateAssignmentTransfer = async (req, res, next) => {
+const validateCustomerTransfer = async (req, res, next) => {
   try {
     const { customerId } = req.params;
     const { transferTo } = req.body;
@@ -255,14 +155,13 @@ const validateAssignmentTransfer = async (req, res, next) => {
     if (!['supervisor', 'manager', 'admin'].includes(currentUser.role)) {
       return res.status(403).json({
         success: false,
-        message: 'Only supervisors, managers, and admins can transfer customer assignments'
+        message: 'Only supervisors, managers, and admins can transfer customers'
       });
     }
 
     // Check recipient's customer limit
     const recipientCustomerCount = await Customer.countDocuments({
-      assignedTo: transferTo,
-      assignmentStatus: 'assigned'
+      receivedBy: transferTo
     });
 
     const maxLimit = recipient.maxCustomersLimit || 50;
@@ -270,14 +169,14 @@ const validateAssignmentTransfer = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: `Cannot transfer. Recipient has reached maximum limit of ${maxLimit} customers`,
-        recipientCurrentAssignments: recipientCustomerCount
+        recipientCurrentReceipts: recipientCustomerCount
       });
     }
 
     req.transferRecipient = recipient;
     next();
   } catch (error) {
-    console.error('Error validating assignment transfer:', error);
+    console.error('Error validating customer transfer:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error during transfer validation'
@@ -286,13 +185,13 @@ const validateAssignmentTransfer = async (req, res, next) => {
 };
 
 /**
- * Express validator rules for assignment requests
+ * Express validator rules for customer receipt requests
  */
-const assignmentValidationRules = () => {
+const receiptValidationRules = () => {
   return [
     body('action')
-      .isIn(['claim', 'unclaim', 'transfer'])
-      .withMessage('Action must be claim, unclaim, or transfer'),
+      .isIn(['receive', 'transfer'])
+      .withMessage('Action must be receive or transfer'),
     body('transferTo')
       .optional()
       .isMongoId()
@@ -320,11 +219,9 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 module.exports = {
-  validateCustomerUnassigned,
-  validateAssistantClaimPermissions,
-  preventAssistantUnclaim,
-  validateAndLogAssignment,
-  validateAssignmentTransfer,
-  assignmentValidationRules,
+  validateCustomerReceipt,
+  validateAssistantReceiptPermissions,
+  validateCustomerTransfer,
+  receiptValidationRules,
   handleValidationErrors
 };

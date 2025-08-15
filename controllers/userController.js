@@ -88,7 +88,23 @@ const getAllUsers = async (req, res) => {
 // ===== CREATE ASSISTANT =====
 const createAssistant = async (req, res) => {
   try {
-    const { firstName, lastName, email } = req.body;
+    const { firstName, lastName, email, password } = req.body;
+    
+    // Validate required fields
+    if (!firstName || !lastName || !email || !password) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'All fields (firstName, lastName, email, password) are required' 
+      });
+    }
+
+    // Validate password length
+    if (password.length < 8) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Password must be at least 8 characters long' 
+      });
+    }
     
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -99,14 +115,12 @@ const createAssistant = async (req, res) => {
       });
     }
 
-    // Generate temporary password
-    const tempPassword = generateSimplePassword();
-
+    // Create assistant with provided password
     const assistant = new User({
       firstName,
       lastName,
       email,
-      password: tempPassword,
+      password: password, // Use provided password instead of generating one
       role: 'assistant',
       isActive: true,
       mustChangePassword: true,
@@ -124,7 +138,7 @@ const createAssistant = async (req, res) => {
         lastName, 
         email, 
         role: assistant.role,
-        tempPassword: tempPassword // Show password to admin
+        tempPassword: password // Return the plain text password to admin
       }
     });
   } catch (error) {

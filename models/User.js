@@ -1,12 +1,15 @@
+// backend/models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const USER_ROLES = {
   ADMIN: 'admin',
-  ASSISTANT: 'assistant'
+  ASSISTANT: 'assistant',
+  CUSTOMER: 'customer'
 };
 
 const userSchema = new mongoose.Schema({
+  // Basic user information (for registration compatibility)
   firstName: {
     type: String,
     required: [true, 'First name is required'],
@@ -29,6 +32,19 @@ const userSchema = new mongoose.Schema({
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
       },
       message: 'Please enter a valid email'
+    }
+  },
+  phone: {
+    type: String,
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v || v.trim() === '') return true;
+        const phoneRegex = /^[\+]?[\s\-\(\)]?[\d\s\-\(\)]{10,}$/;
+        return phoneRegex.test(v);
+      },
+      message: 'Please enter a valid phone number'
     }
   },
   password: {
@@ -58,10 +74,37 @@ const userSchema = new mongoose.Schema({
     required: function() {
       return this.role === USER_ROLES.ASSISTANT;
     }
+  },
+  customerProfile: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Customer',
+    required: function() {
+      return this.role === USER_ROLES.CUSTOMER;
+    }
+  },
+  isCustomerAccount: {
+    type: Boolean,
+    default: function() {
+      return this.role === USER_ROLES.CUSTOMER;
+    }
+  },
+  accountStatus: {
+    type: String,
+    enum: ['active', 'inactive'],
+    default: 'active'
+  },
+  lastPortalLogin: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true,
   toObject: { virtuals: true }
+});
+
+// Virtual for full name
+userSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`;
 });
 
 // Virtual for full name
@@ -87,12 +130,46 @@ userSchema.methods.comparePassword = async function(password) {
   return await bcrypt.compare(password, this.password);
 };
 
+// Method to check portal access
+userSchema.methods.canAccessPortal = function() {
+  return this.role === USER_ROLES.CUSTOMER && 
+         this.accountStatus === 'active';
+};
+
 // Remove password from JSON output
 userSchema.methods.toJSON = function() {
   const user = this.toObject();
   delete user.password;
   return user;
 };
+
+// Method to get user data for frontend
+userSchema.methods.getPublicData = function() {
+  const user = this.toObject();
+  delete user.password;
+  return {
+    _id: user._id,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    fullName: user.fullName,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    isActive: user.isActive,
+    accountStatus: user.accountStatus,
+    customerProfile: user.customerProfile,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
+};
+
+// Get user with customer profile populated
+userSchema.methods.getWithProfile = function() {
+  return this.populate('customerProfile');
+};
+
+// Index for role and account status
+userSchema.index({ role: 1, accountStatus: 1 });
 
 // Export the model and USER_ROLES constant
 const User = mongoose.model('User', userSchema);

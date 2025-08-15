@@ -1,415 +1,352 @@
-const Customer = require('../models/Customer');
-const { validateCustomer } = require('../utils/validation');
-const { USER_ROLES } = require('../models/User');
+const customerService = require('../services/customerService');
 
 class CustomerController {
-  // Create new customer
-  async createCustomer(req, res) {
-    try {
-      const errors = validateCustomer(req.body);
-      if (errors.length > 0) {
-        return res.status(400).json({ 
-          success: false, 
-          errors 
-        });
-      }
-
-      const customerData = { ...req.body };
-
-      // If assistant is creating, auto-assign to themselves
-      if (req.user.role === USER_ROLES.ASSISTANT) {
-        customerData.assignedTo = req.user._id;
-      }
-
-      const customer = new Customer(customerData);
-      await customer.save();
-
-      await customer.populate('assignedTo', 'firstName lastName');
-      
-      res.status(201).json({ 
-        success: true, 
-        data: customer,
-        message: 'Customer created successfully' 
-      });
-    } catch (error) {
-      if (error.name === 'ValidationError') {
-        const messages = Object.values(error.errors).map(err => err.message);
-        return res.status(400).json({
-          success: false,
-          message: 'Validation error',
-          errors: messages
-        });
-      }
-
-      if (error.code === 11000) {
-        return res.status(400).json({
-          success: false,
-          message: 'Customer with this email already exists'
-        });
-      }
-
-      res.status(500).json({ 
-        success: false, 
-        message: error.message 
-      });
-    }
-  }
-
-  // Get all customers with basic pagination and search
+  
+  /**
+   * Get all customers (role-based filtering)
+   */
   async getCustomers(req, res) {
     try {
-      const { 
-        page = 1, 
-        limit = 10, 
-        search = '', 
-        status = '',
-        sortBy = 'createdAt',
-        sortOrder = 'desc'
-      } = req.query;
-
-      const filter = { isActive: true };
+      console.log('🔍 CustomerController.getCustomers called');
       
-      // Assistants can only see their assigned customers
-      if (req.user.role === USER_ROLES.ASSISTANT) {
-        filter.assignedTo = req.user._id;
-      }
+      const customers = await customerService.getCustomers(req.query, req.user);
       
-      // Basic search functionality - includes fullName
-      if (search) {
-        filter.$or = [
-          { fullName: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } },
-          { phone: { $regex: search, $options: 'i' } }
-        ];
-      }
+      // Return customers array directly
+      res.status(200).json(customers);
       
-      if (status) filter.status = status;
-
-      const sort = {};
-      sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
-      const customers = await Customer.find(filter)
-        .sort(sort)
-        .limit(limit * 1)
-        .skip((page - 1) * limit)
-        .populate('assignedTo', 'firstName lastName');
-
-      const total = await Customer.countDocuments(filter);
-
-      res.json({
-        success: true,
-        data: customers,
-        pagination: {
-          current: parseInt(page),
-          pages: Math.ceil(total / limit),
-          total,
-          limit: parseInt(limit)
-        }
-      });
     } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        message: error.message 
-      });
-    }
-  }
-
-  // Get customer by ID
-  async getCustomerById(req, res) {
-    try {
-      const filter = { _id: req.params.id, isActive: true };
-      
-      // Assistants can only see their assigned customers
-      if (req.user.role === USER_ROLES.ASSISTANT) {
-        filter.assignedTo = req.user._id;
-      }
-      
-      const customer = await Customer.findOne(filter)
-        .populate('assignedTo', 'firstName lastName');
-      
-      if (!customer) {
-        return res.status(404).json({ 
-          success: false, 
-          message: 'Customer not found' 
-        });
-      }
-
-      res.json({ 
-        success: true, 
-        data: customer
-      });
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        message: error.message 
-      });
-    }
-  }
-
-  // Update customer
-  async updateCustomer(req, res) {
-    try {
-      const errors = validateCustomer(req.body, true);
-      if (errors.length > 0) {
-        return res.status(400).json({ 
-          success: false, 
-          errors 
-        });
-      }
-
-      const filter = { _id: req.params.id, isActive: true };
-      
-      // Assistants can only update their assigned customers
-      if (req.user.role === USER_ROLES.ASSISTANT) {
-        filter.assignedTo = req.user._id;
-      }
-
-      const updateData = { ...req.body };
-
-      const customer = await Customer.findOneAndUpdate(
-        filter,
-        updateData,
-        { new: true, runValidators: true }
-      )
-      .populate('assignedTo', 'firstName lastName');
-
-      if (!customer) {
-        return res.status(404).json({ 
-          success: false, 
-          message: 'Customer not found' 
-        });
-      }
-
-      res.json({ 
-        success: true, 
-        data: customer,
-        message: 'Customer updated successfully' 
-      });
-    } catch (error) {
-      if (error.name === 'ValidationError') {
-        const messages = Object.values(error.errors).map(err => err.message);
-        return res.status(400).json({
-          success: false,
-          message: 'Validation error',
-          errors: messages
-        });
-      }
-
-      res.status(500).json({ 
-        success: false, 
-        message: error.message 
-      });
-    }
-  }
-
-  // Delete customer (Admin only - soft delete)
-  async deleteCustomer(req, res) {
-    try {
-      if (req.user.role !== USER_ROLES.ADMIN) {
-        return res.status(403).json({ 
-          success: false, 
-          message: 'Access denied. Only admins can delete customers.' 
-        });
-      }
-
-      const customer = await Customer.findByIdAndUpdate(
-        req.params.id,
-        { isActive: false },
-        { new: true }
-      );
-      
-      if (!customer) {
-        return res.status(404).json({ 
-          success: false, 
-          message: 'Customer not found' 
-        });
-      }
-
-      res.json({ 
-        success: true, 
-        message: 'Customer deleted successfully' 
-      });
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        message: error.message 
-      });
-    }
-  }
-
-  // Claim customer (Assistant can claim unassigned customers)
-  async claimCustomer(req, res) {
-    try {
-      if (req.user.role !== USER_ROLES.ASSISTANT) {
-        return res.status(403).json({ 
-          success: false, 
-          message: 'Access denied. Only assistants can claim customers.' 
-        });
-      }
-
-      const customerId = req.params.id;
-      const userId = req.user._id;
-
-      const customer = await Customer.findOne({ _id: customerId, isActive: true });
-      if (!customer) {
-        return res.status(404).json({
-          success: false,
-          message: 'Customer not found'
-        });
-      }
-
-      // Check if customer is already assigned
-      if (customer.assignedTo) {
-        return res.status(400).json({
-          success: false,
-          message: 'Customer is already assigned to another assistant'
-        });
-      }
-
-      // Update customer assignment
-      const updatedCustomer = await Customer.findByIdAndUpdate(
-        customerId,
-        { assignedTo: userId },
-        { new: true, runValidators: true }
-      )
-      .populate('assignedTo', 'firstName lastName');
-
-      res.json({
-        success: true,
-        data: updatedCustomer,
-        message: 'Customer claimed successfully'
-      });
-    } catch (error) {
+      console.error('❌ Error in getCustomers:', error);
       res.status(500).json({
-        success: false,
+        error: 'Failed to fetch customers',
         message: error.message
       });
     }
   }
 
-  // Assign customer to assistant (Admin only)
-  async assignCustomer(req, res) {
+  /**
+   * Get customer by ID (with permission check)
+   */
+  async getCustomerById(req, res) {
     try {
-      if (req.user.role !== USER_ROLES.ADMIN) {
-        return res.status(403).json({ 
-          success: false, 
-          message: 'Access denied. Only admins can assign customers.' 
-        });
-      }
-
-      const { assignedTo } = req.body;
-      const customerId = req.params.id;
-
-      const customer = await Customer.findById(customerId);
+      const customer = await customerService.getCustomerById(req.params.id, req.user);
+      
       if (!customer) {
-        return res.status(404).json({ 
-          success: false, 
-          message: 'Customer not found' 
+        return res.status(404).json({
+          error: 'Customer not found'
         });
       }
 
-      const updatedCustomer = await Customer.findByIdAndUpdate(
-        customerId,
-        { assignedTo: assignedTo || null },
-        { new: true, runValidators: true }
-      )
-      .populate('assignedTo', 'firstName lastName');
-
-      const message = assignedTo 
-        ? `Customer assigned to ${updatedCustomer.assignedTo?.firstName} ${updatedCustomer.assignedTo?.lastName}`
-        : 'Customer unassigned';
-
-      res.json({ 
-        success: true, 
-        data: updatedCustomer,
-        message 
-      });
+      // Return customer object directly
+      res.status(200).json(customer);
+      
     } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        message: error.message 
+      console.error('❌ Error fetching customer:', error);
+      res.status(500).json({
+        error: 'Failed to fetch customer',
+        message: error.message
       });
     }
   }
 
-  // Get basic dashboard statistics
+  /**
+   * Create new customer
+   */
+  async createCustomer(req, res) {
+    try {
+      const customer = await customerService.createCustomer(req.body, req.user);
+      
+      // Return created customer object directly
+      res.status(201).json(customer);
+      
+    } catch (error) {
+      console.error('❌ Error creating customer:', error);
+      
+      // Handle validation errors
+      if (error.message.includes('validation') || error.message.includes('required')) {
+        return res.status(400).json({
+          error: error.message
+        });
+      }
+      
+      res.status(500).json({
+        error: 'Failed to create customer',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Update customer (with permission check)
+   */
+  async updateCustomer(req, res) {
+    try {
+      const customer = await customerService.updateCustomer(req.params.id, req.body, req.user);
+      
+      if (!customer) {
+        return res.status(404).json({
+          error: 'Customer not found'
+        });
+      }
+
+      // Return updated customer object directly
+      res.status(200).json(customer);
+      
+    } catch (error) {
+      console.error('❌ Error updating customer:', error);
+      
+      if (error.message.includes('validation')) {
+        return res.status(400).json({
+          error: error.message
+        });
+      }
+      
+      res.status(500).json({
+        error: 'Failed to update customer',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Delete customer (with permission check)
+   */
+  async deleteCustomer(req, res) {
+    try {
+      const result = await customerService.deleteCustomer(req.params.id, req.user);
+      
+      if (!result) {
+        return res.status(404).json({
+          error: 'Customer not found'
+        });
+      }
+
+      // Return simple success response
+      res.status(200).json({
+        message: 'Customer deleted successfully'
+      });
+      
+    } catch (error) {
+      console.error('❌ Error deleting customer:', error);
+      res.status(500).json({
+        error: 'Failed to delete customer',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Get dashboard statistics (role-based)
+   */
   async getDashboardStats(req, res) {
     try {
-      const baseFilter = { isActive: true };
+      const stats = await customerService.getDashboardStats(req.user);
       
-      // Assistants only see their own stats
-      if (req.user.role === USER_ROLES.ASSISTANT) {
-        baseFilter.assignedTo = req.user._id;
-      }
-
-      // Total customers
-      const totalCustomers = await Customer.countDocuments(baseFilter);
-
-      // Active customers
-      const activeCustomers = await Customer.countDocuments({
-        ...baseFilter,
-        status: 'active'
-      });
-
-      // Recent customers (last 7 days)
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      // Return stats object directly
+      res.status(200).json(stats);
       
-      const recentCustomers = await Customer.countDocuments({
-        ...baseFilter,
-        createdAt: { $gte: sevenDaysAgo }
-      });
-
-      // Unassigned customers (Admin only)
-      let unassignedCustomers = 0;
-      if (req.user.role === USER_ROLES.ADMIN) {
-        unassignedCustomers = await Customer.countDocuments({
-          isActive: true,
-          assignedTo: null
-        });
-      }
-
-      res.json({
-        success: true,
-        data: {
-          totalCustomers,
-          activeCustomers,
-          recentCustomers,
-          unassignedCustomers
-        }
-      });
     } catch (error) {
+      console.error('❌ Error fetching dashboard stats:', error);
       res.status(500).json({
-        success: false,
-        message: 'Error fetching dashboard statistics'
+        error: 'Failed to fetch dashboard statistics',
+        message: error.message
       });
     }
   }
 
-  // Get recent customers for dashboard - Updated to ensure fullName is included
-  async getRecentCustomers(req, res) {
+  /**
+   * Get customers assigned to assistant
+   */
+  async getAssignedCustomers(req, res) {
     try {
-      const { limit = 10 } = req.query;
-      const filter = { isActive: true };
+      const { assistantId } = req.params;
+      const customers = await customerService.getCustomersByAssistant(assistantId, req.query, req.user);
       
-      // Assistants only see their assigned customers
-      if (req.user.role === USER_ROLES.ASSISTANT) {
-        filter.assignedTo = req.user._id;
+      res.status(200).json(customers);
+      
+    } catch (error) {
+      console.error('❌ Error fetching assigned customers:', error);
+      res.status(500).json({
+        error: 'Failed to fetch assigned customers',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Get unassigned customers
+   */
+  async getUnassignedCustomers(req, res) {
+    try {
+      const customers = await customerService.getUnassignedCustomers(req.query, req.user);
+      
+      res.status(200).json(customers);
+      
+    } catch (error) {
+      console.error('❌ Error fetching unassigned customers:', error);
+      res.status(500).json({
+        error: 'Failed to fetch unassigned customers',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Assign customer to assistant
+   */
+  async assignCustomer(req, res) {
+    try {
+      const { id } = req.params;
+      const { assistantId } = req.body;
+      
+      const customer = await customerService.assignCustomer(id, assistantId, req.user);
+      
+      res.status(200).json({
+        message: 'Customer assigned successfully',
+        customer
+      });
+      
+    } catch (error) {
+      console.error('❌ Error assigning customer:', error);
+      res.status(500).json({
+        error: 'Failed to assign customer',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Get available assistants for assignment
+   */
+  async getAvailableAssistants(req, res) {
+    try {
+      const assistants = await customerService.getAvailableAssistants(req.user);
+      
+      res.status(200).json(assistants);
+      
+    } catch (error) {
+      console.error('❌ Error fetching available assistants:', error);
+      res.status(500).json({
+        error: 'Failed to fetch available assistants',
+        message: error.message
+      });
+    }
+  }
+
+  // ==========================================
+  // CUSTOMER PORTAL FUNCTIONS
+  // ==========================================
+
+  /**
+   * Get customer dashboard (Customer Portal)
+   * Shows personal dashboard for logged-in customer
+   */
+  async getDashboard(req, res) {
+    try {
+      console.log('🔍 CustomerController.getDashboard (Customer Portal) called');
+      
+      // Security check: ensure user has customer profile
+      if (!req.user.customerProfile) {
+        return res.status(403).json({
+          error: 'Access denied - Customer profile required'
+        });
       }
 
-      const customers = await Customer.find(filter)
-        .sort({ createdAt: -1 })
-        .limit(parseInt(limit))
-        .populate('assignedTo', 'firstName lastName')
-        .select('fullName email phone status createdAt assignedTo');
-
-      res.json({
-        success: true,
-        data: customers
-      });
+      const dashboard = await customerService.getCustomerDashboard(req.user.customerProfile, req.user);
+      
+      res.status(200).json(dashboard);
+      
     } catch (error) {
+      console.error('❌ Error fetching customer dashboard:', error);
       res.status(500).json({
-        success: false,
+        error: 'Failed to fetch dashboard',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Get customer's own profile (Customer Portal)
+   */
+  async getProfile(req, res) {
+    try {
+      console.log('🔍 CustomerController.getProfile called');
+      
+      // Security check: ensure user has customer profile
+      if (!req.user.customerProfile) {
+        return res.status(403).json({
+          error: 'Access denied - Customer profile required'
+        });
+      }
+
+      const profile = await customerService.getCustomerProfile(req.user.customerProfile, req.user);
+      
+      if (!profile) {
+        return res.status(404).json({
+          error: 'Profile not found'
+        });
+      }
+
+      res.status(200).json(profile);
+      
+    } catch (error) {
+      console.error('❌ Error fetching customer profile:', error);
+      res.status(500).json({
+        error: 'Failed to fetch profile',
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Update customer's own profile (Customer Portal)
+   * Only allows editing safe fields
+   */
+  async updateProfile(req, res) {
+    try {
+      console.log('🔍 CustomerController.updateProfile called');
+      
+      // Security check: ensure user has customer profile
+      if (!req.user.customerProfile) {
+        return res.status(403).json({
+          error: 'Access denied - Customer profile required'
+        });
+      }
+
+      // Filter to only allow safe fields for customer editing
+      const allowedFields = ['email', 'phone', 'address', 'name'];
+      const safeUpdateData = {};
+      
+      allowedFields.forEach(field => {
+        if (req.body[field] !== undefined) {
+          safeUpdateData[field] = req.body[field];
+        }
+      });
+
+      const updatedProfile = await customerService.updateCustomerProfile(
+        req.user.customerProfile, 
+        safeUpdateData, 
+        req.user
+      );
+      
+      if (!updatedProfile) {
+        return res.status(404).json({
+          error: 'Profile not found'
+        });
+      }
+
+      res.status(200).json(updatedProfile);
+      
+    } catch (error) {
+      console.error('❌ Error updating customer profile:', error);
+      
+      if (error.message.includes('validation')) {
+        return res.status(400).json({
+          error: error.message
+        });
+      }
+      
+      res.status(500).json({
+        error: 'Failed to update profile',
         message: error.message
       });
     }

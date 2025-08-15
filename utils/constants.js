@@ -176,7 +176,11 @@ const ERROR_MESSAGES = {
   USER_NOT_FOUND: 'User not found',
   ACCOUNT_INACTIVE: 'Account has been deactivated',
   ADMIN_REQUIRED: 'Admin access required',
+  ADMIN_ONLY_OPERATION: 'This operation requires administrator privileges',
   OWNERSHIP_REQUIRED: 'You can only access your own resources',
+  OWNERSHIP_VIOLATION: 'You can only access your own resources',
+  ACCESS_DENIED: 'Access denied',
+  DELETE_DENIED: 'You do not have permission to delete resources',
   FINANCIAL_ACCESS_DENIED: 'Access to financial data is restricted',
   DELETE_PERMISSION_DENIED: 'You do not have permission to delete resources',
   USER_REGISTRATION_DENIED: 'Only administrators can register new users'
@@ -207,7 +211,14 @@ const VALIDATION_RULES = {
   PASSWORD_MIN_LENGTH: 8,
   USERNAME_MIN_LENGTH: 3,
   EMAIL_REGEX: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-  PHONE_REGEX: /^[\+]?[1-9][\d]{0,15}$/
+  PHONE_REGEX: /^[\+]?[1-9][\d]{0,15}$/,
+  MAX_CREDIT_LIMIT: 1000000,
+  PAYMENT_TERMS: ['net30', 'net60', 'net90', 'immediate'],
+  MAX_ITEM_QUANTITY: 1000,
+  ADMIN_MAX_ITEM_PRICE: 100000,
+  ASSISTANT_MAX_ITEM_PRICE: 10000,
+  ADMIN_MAX_ORDER_VALUE: 500000,
+  ASSISTANT_MAX_ORDER_VALUE: 50000
 };
 
 // Database field names

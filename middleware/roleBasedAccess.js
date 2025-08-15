@@ -313,6 +313,35 @@ const requireFinancialAccess = () => {
   };
 };
 
+// Flexible authorize function for route compatibility
+const authorize = (roleOrRoles) => {
+  // If no parameter provided, allow any authenticated user
+  if (!roleOrRoles) {
+    return (req, res, next) => {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication required'
+        });
+      }
+      next();
+    };
+  }
+
+  // If it's a string role like 'admin', use requireRole
+  if (typeof roleOrRoles === 'string') {
+    return requireRole(roleOrRoles);
+  }
+
+  // If it's an array of roles, use requireRole
+  if (Array.isArray(roleOrRoles)) {
+    return requireRole(roleOrRoles);
+  }
+
+  // Default fallback
+  return requireRole(roleOrRoles);
+};
+
 // Validate JWT Secret on startup
 const validateJWTSecret = () => {
   if (!process.env.JWT_SECRET) {
@@ -325,10 +354,13 @@ const validateJWTSecret = () => {
   }
 };
 
-// Optional: Call this when your server starts
-// validateJWTSecret();
-
+// Export with route-compatible names
 module.exports = {
+  // Route-compatible exports (what your routes expect)
+  authenticate: authenticateToken,  // Main export for routes
+  authorize,                        // Flexible authorize function
+
+  // All existing exports for backward compatibility and internal use
   ROLES,
   PERMISSIONS,
   ROLE_PERMISSIONS,

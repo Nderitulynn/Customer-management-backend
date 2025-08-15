@@ -16,7 +16,12 @@ const { jwtStrategy } = require('./config/jwt');
 const authRoutes = require('./routes/auth');
 const customerRoutes = require('./routes/customers');
 const userRoutes = require('./routes/users');
-const dashboardRoutes = require('./routes/dashboard');
+const adminRoutes = require('./routes/adminRoutes');
+const assistantRoutes = require('./routes/assistantRoutes');
+const orderRoutes = require('./routes/orders'); 
+const customerOrderRoutes = require('./routes/customerOrderRoutes');
+const invoiceRoutes = require('./routes/invoiceRoutes');
+const messages = require('./routes/messages'); // Add message routes import
 
 // Import middleware - FIXED: Import from correct path
 const { authenticate } = require('./middleware/auth');
@@ -44,36 +49,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
-// Rate limiting - different limits for different endpoints
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: {
-    success: false,
-    message: 'Too many requests from this IP, please try again later.',
-    timestamp: new Date().toISOString()
-  },
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
-// Stricter rate limiting for auth endpoints
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 auth requests per windowMs
-  message: {
-    success: false,
-    message: 'Too many authentication attempts, please try again later.',
-    timestamp: new Date().toISOString()
-  },
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
-// Apply general rate limiting
-app.use(generalLimiter);
-
-// CORS configuration - FIXED: Updated ports to match Vite frontend
+// CORS configuration - MOVED BEFORE RATE LIMITING
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
@@ -98,7 +74,42 @@ const corsOptions = {
   exposedHeaders: ['X-Total-Count', 'X-Page-Count']
 };
 
+// Apply CORS BEFORE rate limiting
 app.use(cors(corsOptions));
+
+// Rate limiting - different limits for different endpoints
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: {
+    success: false,
+    message: 'Too many requests from this IP, please try again later.',
+    timestamp: new Date().toISOString()
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip preflight requests (OPTIONS)
+  skip: (req) => req.method === 'OPTIONS'
+});
+
+// Stricter rate limiting for auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  // More lenient limits for development
+  max: process.env.NODE_ENV === 'development' ? 50 : 10,
+  message: {
+    success: false,
+    message: 'Too many authentication attempts, please try again later.',
+    timestamp: new Date().toISOString()
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip preflight requests (OPTIONS)
+  skip: (req) => req.method === 'OPTIONS'
+});
+
+// Apply general rate limiting (after CORS)
+app.use(generalLimiter);
 
 // Body parsing middleware
 app.use(express.json({ 
@@ -108,7 +119,6 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
 
 // Data sanitization against NoSQL query injection
 app.use(mongoSanitize());
@@ -142,8 +152,21 @@ app.use('/api/customers', authenticate, customerRoutes);
 // Protected user routes
 app.use('/api/users', userRoutes);
 
+// Protected order routes - Added orders router
+app.use('/api/orders', authenticate, orderRoutes);
+
+// Protected customer-orders routes - Add this line
+app.use('/api/customer-orders', authenticate, customerOrderRoutes);
+
+// Protected invoice routes
+app.use('/api/invoices', authenticate, invoiceRoutes);
+
+// Protected message routes - Add message routes
+app.use('/api/messages', authenticate, messages);
+
 //Protected dashboard routes
-app.use('/api/dashboard', authenticate, dashboardRoutes);
+app.use('/api/admin-dashboard', authenticate, adminRoutes);
+app.use('/api/assistant-dashboard', authenticate, assistantRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
@@ -155,7 +178,11 @@ app.get('/', (req, res) => {
     endpoints: {
       auth: '/api/auth',
       customers: '/api/customers (requires authentication)',
-      users: '/api/users (requires authentication)'
+      users: '/api/users (requires authentication)',
+      orders: '/api/orders (requires authentication)',
+      customerOrders: '/api/customer-orders (requires authentication)',
+      invoices: '/api/invoices (requires authentication)',
+      messages: '/api/messages (requires authentication)' // Add messages endpoint info
     },
     environment: process.env.NODE_ENV || 'development',
     security: {

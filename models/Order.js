@@ -1,18 +1,27 @@
 const mongoose = require('mongoose');
 
 const orderSchema = new mongoose.Schema({
-  // Order Identification
+  // Auto-generated order number with proper format
   orderNumber: {
     type: String,
     unique: true,
-    required: true
+    required: true,
+    default: function() {
+      // Generate format: ORD-YYYYMMDD-XXXXX
+      const date = new Date();
+      const dateStr = date.getFullYear() + 
+                     String(date.getMonth() + 1).padStart(2, '0') + 
+                     String(date.getDate()).padStart(2, '0');
+      const random = Math.floor(Math.random() * 99999).toString().padStart(5, '0');
+      return `ORD-${dateStr}-${random}`;
+    }
   },
-  
-  // Customer Reference - FIXED: Changed from 'customer' to 'customerId'
+
+  // Customer Reference
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Customer',
-    required: [true, 'Customer is required']
+    required: [true, 'Customer reference is required']
   },
 
   // Order Items
@@ -22,80 +31,65 @@ const orderSchema = new mongoose.Schema({
       required: [true, 'Product name is required'],
       trim: true
     },
-    description: {
-      type: String,
-      trim: true
-    },
     quantity: {
       type: Number,
       required: [true, 'Quantity is required'],
-      min: [1, 'Quantity must be at least 1'],
-      default: 1
+      min: [1, 'Quantity must be at least 1']
     },
     unitPrice: {
       type: Number,
       required: [true, 'Unit price is required'],
       min: [0, 'Unit price cannot be negative']
-    },
-    totalPrice: {
-      type: Number,
-      required: true,
-      min: [0, 'Total price cannot be negative']
     }
   }],
 
-  // Order Totals
+  // Order Total
   orderTotal: {
     type: Number,
     required: [true, 'Order total is required'],
     min: [0, 'Order total cannot be negative']
   },
 
-  // Order Status and Priority
+  // Order Status
   status: {
     type: String,
     enum: ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'],
     default: 'pending'
   },
-  priority: {
-    type: String,
-    enum: ['low', 'medium', 'high'],
-    default: 'medium'
+
+  // Creation Date (replaces dueDate)
+  creationDate: {
+    type: Date,
+    default: Date.now,
+    required: true
   },
 
-  // Dates and Scheduling
-  dueDate: {
-    type: Date
+  // Received By (Assistant who received the order)
+  receivedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Order must be received by a user']
+  },
+
+  // Created By (Assistant who created the order)
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Created by reference is required']
+  },
+
+  // Payment Status
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'paid', 'partial', 'refunded'],
+    default: 'pending'
   },
 
   // Order Notes
   notes: {
     type: String,
-    maxlength: [1000, 'Notes cannot exceed 1000 characters']
-  },
-
-  // Payment Information
-  paymentStatus: {
-    type: String,
-    enum: ['pending', 'partial', 'paid'],
-    default: 'pending'
-  },
-  paymentAmount: {
-    type: Number,
-    default: 0,
-    min: [0, 'Payment amount cannot be negative']
-  },
-
-  // Audit Fields
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  assignedTo: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    maxlength: [500, 'Notes cannot exceed 500 characters'],
+    default: ''
   }
 }, {
   timestamps: true,
@@ -103,164 +97,120 @@ const orderSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes for performance - FIXED: Updated index from 'customer' to 'customerId'
-orderSchema.index({ orderNumber: 1 });
+// Pre-save middleware to ensure unique order numbers
+orderSchema.pre('save', async function(next) {
+  if (this.isNew && !this.orderNumber) {
+    let isUnique = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    while (!isUnique && attempts < maxAttempts) {
+      // Generate new order number
+      const date = new Date();
+      const dateStr = date.getFullYear() + 
+                     String(date.getMonth() + 1).padStart(2, '0') + 
+                     String(date.getDate()).padStart(2, '0');
+      const random = Math.floor(Math.random() * 99999).toString().padStart(5, '0');
+      this.orderNumber = `ORD-${dateStr}-${random}`;
+      
+      // Check if it exists
+      const existing = await mongoose.model('Order').findOne({
+        orderNumber: this.orderNumber
+      });
+      
+      if (!existing) {
+        isUnique = true;
+      }
+      attempts++;
+    }
+    
+    if (!isUnique) {
+      return next(new Error('Failed to generate unique order number'));
+    }
+  }
+  next();
+});
+
+// Virtual field to get order age in days
+orderSchema.virtual('orderAge').get(function() {
+  if (!this.creationDate) return 0;
+  const today = new Date();
+  const diffTime = today - this.creationDate;
+  return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+});
+
+// Basic indexes for performance
 orderSchema.index({ customerId: 1 });
 orderSchema.index({ status: 1 });
-orderSchema.index({ priority: 1 });
-orderSchema.index({ assignedTo: 1 });
-orderSchema.index({ dueDate: 1 });
+orderSchema.index({ receivedBy: 1 });
+orderSchema.index({ createdBy: 1 });
+orderSchema.index({ creationDate: -1 });
+orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ createdAt: -1 });
+orderSchema.index({ orderNumber: 1 });
 
-// Virtual for payment balance
-orderSchema.virtual('paymentBalance').get(function() {
-  return this.orderTotal - this.paymentAmount;
-});
+// Compound indexes for common queries
+orderSchema.index({ status: 1, creationDate: -1 });
+orderSchema.index({ receivedBy: 1, creationDate: -1 });
+orderSchema.index({ createdBy: 1, status: 1 });
+orderSchema.index({ paymentStatus: 1, status: 1 });
 
-// Virtual for overdue status
-orderSchema.virtual('isOverdue').get(function() {
-  if (!this.dueDate) return false;
-  return new Date() > this.dueDate && this.status !== 'completed' && this.status !== 'cancelled';
-});
-
-// Pre-save middleware to generate order number
-orderSchema.pre('save', async function(next) {
-  if (this.isNew) {
-    try {
-      // Generate order number: ORD-YYYYMMDD-XXX
-      const today = new Date();
-      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-      
-      // Find the highest order number for today
-      const todayOrders = await this.constructor.find({
-        orderNumber: new RegExp(`^ORD-${dateStr}-`)
-      }).sort({ orderNumber: -1 }).limit(1);
-
-      let sequence = 1;
-      if (todayOrders.length > 0) {
-        const lastOrderNumber = todayOrders[0].orderNumber;
-        const lastSequence = parseInt(lastOrderNumber.split('-')[2]);
-        sequence = lastSequence + 1;
-      }
-
-      this.orderNumber = `ORD-${dateStr}-${sequence.toString().padStart(3, '0')}`;
-    } catch (error) {
-      return next(error);
-    }
-  }
-  next();
-});
-
-// Pre-save middleware to calculate order total
-orderSchema.pre('save', function(next) {
-  // Calculate item total prices
-  if (this.items && this.items.length > 0) {
-    this.items.forEach(item => {
-      item.totalPrice = item.quantity * item.unitPrice;
-    });
-
-    // Calculate order total
-    this.orderTotal = this.items.reduce((total, item) => total + item.totalPrice, 0);
-  }
-
-  // Validate payment amount doesn't exceed order total
-  if (this.paymentAmount > this.orderTotal) {
-    return next(new Error('Payment amount cannot exceed order total'));
-  }
-
-  next();
-});
-
-// Post-save middleware to update customer statistics - FIXED: Updated field reference
-orderSchema.post('save', async function(doc, next) {
-  try {
-    const Customer = mongoose.model('Customer');
-    const customer = await Customer.findById(doc.customerId);
-    
-    if (customer) {
-      // Get all orders for this customer - FIXED: Updated field reference
-      const Order = mongoose.model('Order');
-      const customerOrders = await Order.find({ 
-        customerId: doc.customerId,
-        status: { $ne: 'cancelled' }
-      });
-
-      // Calculate totals
-      const totalOrders = customerOrders.length;
-      const totalSpent = customerOrders
-        .filter(order => order.status === 'completed')
-        .reduce((sum, order) => sum + order.orderTotal, 0);
-
-      // Find last order date (completed orders only)
-      const completedOrders = customerOrders.filter(order => order.status === 'completed');
-      let lastOrderDate = null;
-      if (completedOrders.length > 0) {
-        lastOrderDate = completedOrders
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
-          .createdAt;
-      }
-
-      // Update customer
-      await Customer.findByIdAndUpdate(doc.customerId, {
-        totalOrders,
-        totalSpent,
-        lastOrderDate
-      });
-    }
-  } catch (error) {
-    console.error('Error updating customer statistics:', error);
-  }
-  next();
-});
-
-// Static method for order analytics
-orderSchema.statics.getOrderStats = async function() {
-  const stats = await this.aggregate([
-    {
-      $group: {
-        _id: null,
-        totalOrders: { $sum: 1 },
-        totalRevenue: { $sum: '$orderTotal' },
-        averageOrderValue: { $avg: '$orderTotal' },
-        pendingOrders: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
-        completedOrders: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } }
-      }
-    }
-  ]);
-
-  const statusStats = await this.aggregate([
-    { $group: { _id: '$status', count: { $sum: 1 }, revenue: { $sum: '$orderTotal' } } }
-  ]);
-
-  return {
-    overview: stats[0] || {
-      totalOrders: 0,
-      totalRevenue: 0,
-      averageOrderValue: 0,
-      pendingOrders: 0,
-      completedOrders: 0
-    },
-    byStatus: statusStats.reduce((acc, stat) => {
-      acc[stat._id] = { count: stat.count, revenue: stat.revenue };
-      return acc;
-    }, {})
-  };
+// Static method to get status options
+orderSchema.statics.getStatusOptions = function() {
+  return ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
 };
 
-// Instance methods
-orderSchema.methods.updatePayment = function(amount) {
-  this.paymentAmount += amount;
-  if (this.paymentAmount >= this.orderTotal) {
-    this.paymentStatus = 'paid';
-  } else if (this.paymentAmount > 0) {
-    this.paymentStatus = 'partial';
-  }
-  return this.save();
+// Static method to get payment status options
+orderSchema.statics.getPaymentStatusOptions = function() {
+  return ['pending', 'paid', 'partial', 'refunded'];
 };
 
+// Static method to find recent orders
+orderSchema.statics.findRecentOrders = function(days = 7) {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+  
+  return this.find({
+    creationDate: { $gte: startDate }
+  }).sort({ creationDate: -1 });
+};
+
+// Instance method to update status
 orderSchema.methods.updateStatus = function(newStatus) {
+  const validStatuses = this.constructor.getStatusOptions();
+  if (!validStatuses.includes(newStatus)) {
+    throw new Error(`Invalid status: ${newStatus}. Valid options: ${validStatuses.join(', ')}`);
+  }
+  
   this.status = newStatus;
   return this.save();
+};
+
+// Instance method to update payment status
+orderSchema.methods.updatePaymentStatus = function(newPaymentStatus) {
+  const validPaymentStatuses = this.constructor.getPaymentStatusOptions();
+  if (!validPaymentStatuses.includes(newPaymentStatus)) {
+    throw new Error(`Invalid payment status: ${newPaymentStatus}. Valid options: ${validPaymentStatuses.join(', ')}`);
+  }
+  
+  this.paymentStatus = newPaymentStatus;
+  return this.save();
+};
+
+// Instance method to calculate total from items
+orderSchema.methods.calculateTotal = function() {
+  if (!this.items || this.items.length === 0) {
+    return 0;
+  }
+  
+  return this.items.reduce((total, item) => {
+    return total + (item.quantity * item.unitPrice);
+  }, 0);
+};
+
+// Instance method to check if order can be edited
+orderSchema.methods.canBeEdited = function() {
+  return !['completed', 'cancelled'].includes(this.status);
 };
 
 module.exports = mongoose.model('Order', orderSchema);

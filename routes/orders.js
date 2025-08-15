@@ -1,157 +1,80 @@
 const express = require('express');
-const multer = require('multer');
+const orderController = require('../controllers/orderController');
+const { authenticate, authorize } = require('../middleware/auth');
+
 const router = express.Router();
 
-// Multer config for file uploads
-const upload = multer({ dest: 'uploads/' });
-
-// Validation middleware
-const validateOrder = (req, res, next) => {
-  const { customerId, items } = req.body;
-  if (!customerId || !items || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'customerId and items array required' });
+// Basic validation middleware for MongoDB ObjectId
+const validateObjectId = (req, res, next) => {
+  const { ObjectId } = require('mongoose').Types;
+  
+  if (req.params.id && !ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ 
+      error: 'Invalid ID format' 
+    });
   }
+  
+  if (req.params.customerId && !ObjectId.isValid(req.params.customerId)) {
+    return res.status(400).json({ 
+      error: 'Invalid customer ID format' 
+    });
+  }
+  
   next();
 };
 
-const validateOrderId = (req, res, next) => {
-  if (!req.params.id || isNaN(req.params.id)) {
-    return res.status(400).json({ error: 'Valid order ID required' });
-  }
-  next();
-};
+// @route   GET /api/orders/stats
+// @desc    Get order statistics for dashboard
+// @access  Private (All authenticated users)
+router.get('/stats', orderController.getDashboardStats);
 
-// GET /orders - List orders with filtering and pagination
-router.get('/', (req, res) => {
-  const { 
-    page = 1, 
-    limit = 10, 
-    status, 
-    customerId, 
-    startDate, 
-    endDate 
-  } = req.query;
-  
-  // Mock response - replace with actual database query
-  res.json({
-    orders: [],
-    pagination: {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      total: 0
-    },
-    filters: { status, customerId, startDate, endDate }
-  });
-});
+// @route   GET /api/orders/activity
+// @desc    Get recent order activity (for admin dashboard)
+// @access  Private (All authenticated users)
+router.get('/activity', authenticate, orderController.getRecentActivity);
 
-// GET /orders/:id - Get single order
-router.get('/:id', validateOrderId, (req, res) => {
-  const orderId = req.params.id;
-  // Mock response - replace with database query
-  res.json({
-    id: orderId,
-    customerId: 1,
-    status: 'pending',
-    items: [],
-    total: 0,
-    createdAt: new Date().toISOString()
-  });
-});
+// @route   GET /api/orders
+// @desc    Get all orders with optional search and filtering
+//          Query params: search, status, customerId (all optional)
+// @access  Private (All authenticated users)
+router.get('/', authenticate, orderController.getOrders);
 
-// POST /orders - Create new order
-router.post('/', validateOrder, (req, res) => {
-  const { customerId, items, notes } = req.body;
-  
-  // Mock creation - replace with database insert
-  const newOrder = {
-    id: Date.now(),
-    customerId,
-    items,
-    notes,
-    status: 'pending',
-    total: items.reduce((sum, item) => sum + (item.price * item.quantity), 0),
-    createdAt: new Date().toISOString()
-  };
-  
-  res.status(201).json(newOrder);
-});
+// @route   POST /api/orders
+// @desc    Create new order
+//          Required: customerId, items, orderTotal
+// @access  Private (All authenticated users)
+router.post('/', authenticate, orderController.createOrder);
 
-// PUT /orders/:id - Update order
-router.put('/:id', validateOrderId, validateOrder, (req, res) => {
-  const orderId = req.params.id;
-  const updates = req.body;
-  
-  // Mock update - replace with database update
-  res.json({
-    id: orderId,
-    ...updates,
-    updatedAt: new Date().toISOString()
-  });
-});
+// @route   GET /api/orders/customer/:customerId
+// @desc    Get all orders for specific customer
+// @access  Private (All authenticated users)
+router.get('/customer/:customerId', authenticate, validateObjectId, orderController.getCustomerOrders);
 
-// DELETE /orders/:id - Delete order
-router.delete('/:id', validateOrderId, (req, res) => {
-  const orderId = req.params.id;
-  
-  // Mock deletion - replace with database delete
-  res.json({ 
-    message: `Order ${orderId} deleted successfully` 
-  });
-});
+// @route   GET /api/orders/:id
+// @desc    Get single order by ID
+// @access  Private (All authenticated users)
+router.get('/:id', authenticate, validateObjectId, orderController.getOrderById);
 
-// POST /orders/:id/attachments - Upload order attachments
-router.post('/:id/attachments', validateOrderId, upload.array('files', 5), (req, res) => {
-  const orderId = req.params.id;
-  const files = req.files;
-  
-  if (!files || files.length === 0) {
-    return res.status(400).json({ error: 'No files uploaded' });
-  }
-  
-  const attachments = files.map(file => ({
-    filename: file.originalname,
-    path: file.path,
-    size: file.size,
-    uploadedAt: new Date().toISOString()
-  }));
-  
-  res.json({
-    orderId,
-    attachments,
-    message: `${files.length} file(s) uploaded successfully`
-  });
-});
+// @route   PUT /api/orders/:id
+// @desc    Update order
+// @access  Private (All authenticated users)
+router.put('/:id', authenticate, validateObjectId, orderController.updateOrder);
 
-// POST /orders/bulk - Bulk operations
-router.post('/bulk', (req, res) => {
-  const { operation, orderIds, updates } = req.body;
-  
-  if (!operation || !orderIds || !Array.isArray(orderIds)) {
-    return res.status(400).json({ error: 'operation and orderIds array required' });
-  }
-  
-  // Mock bulk operation
-  let result;
-  switch (operation) {
-    case 'delete':
-      result = { deleted: orderIds.length };
-      break;
-    case 'update':
-      if (!updates) {
-        return res.status(400).json({ error: 'updates object required for bulk update' });
-      }
-      result = { updated: orderIds.length, changes: updates };
-      break;
-    default:
-      return res.status(400).json({ error: 'Invalid operation. Use: delete, update' });
-  }
-  
-  res.json({
-    operation,
-    orderIds,
-    result,
-    processedAt: new Date().toISOString()
-  });
-});
+// @route   PUT /api/orders/:id/status
+// @desc    Update order status only
+//          Required: status
+// @access  Private (All authenticated users)
+router.put('/:id/status', authenticate, validateObjectId, orderController.updateOrderStatus);
+
+// @route   PUT /api/orders/:id/payment
+// @desc    Update order payment information
+//          Required: paymentAmount or paymentStatus
+// @access  Private (All authenticated users)
+router.put('/:id/payment', authenticate, validateObjectId, orderController.updateOrderPayment);
+
+// @route   DELETE /api/orders/:id
+// @desc    Delete order (soft delete)
+// @access  Private (Admin only for safety)
+router.delete('/:id', authenticate, authorize(['admin']), validateObjectId, orderController.deleteOrder);
 
 module.exports = router;

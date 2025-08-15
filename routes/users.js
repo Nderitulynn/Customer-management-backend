@@ -2,120 +2,158 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 const { authenticate, authorize } = require('../middleware/auth');
-const ValidationMiddleware = require('../middleware/validation');
+const { USER_ROLES } = require('../models/User');
 
-// Create an instance of ValidationMiddleware
-const validator = new ValidationMiddleware();
+// Only include ValidationMiddleware if it exists
+let validator;
+try {
+  const ValidationMiddleware = require('../middleware/validation');
+  validator = new ValidationMiddleware();
+} catch (error) {
+  console.log('ValidationMiddleware not found, routes will work without validation');
+  validator = {
+    validateRequest: () => (req, res, next) => next() // No-op middleware
+  };
+}
 
-// ===== ADMIN SETUP ROUTES =====
+// ===== ADMIN SETUP ROUTES (UNPROTECTED) =====
 
-// Register admin (one-time setup, unprotected)
+// @route   POST /api/users/register-admin
+// @desc    Register admin (one-time setup)
+// @access  Public (unprotected for initial setup)
 router.post('/register-admin', 
   validator.validateRequest('admin'),
   userController.registerAdmin
 );
 
-// Get all users (admin only - for debugging/management)
-router.get('/', 
-  authenticate,
-  authorize(['admin']),
-  userController.getAllUsers
-);
+// ===== PROFILE ROUTES (AUTHENTICATED USERS) =====
 
-// ===== ASSISTANT MANAGEMENT ROUTES (ADMIN ONLY) =====
-
-// Create assistant (admin only)
-router.post('/assistants', 
-  authenticate,
-  authorize(['admin']), 
-  validator.validateRequest('assistant'),
-  userController.createAssistant
-);
-
-// Get all assistants (admin only)
-router.get('/assistants', 
-  authenticate,
-  authorize(['admin']),
-  userController.getAllAssistants
-);
-
-// Get specific assistant by ID (admin only)
-router.get('/assistants/:id', 
-  authenticate,
-  authorize(['admin']),
-  userController.getAssistantDetails
-);
-
-// Update assistant (admin only)
-router.put('/assistants/:id', 
-  authenticate,
-  authorize(['admin']),
-  validator.validateRequest('profile'),
-  userController.updateAssistant
-);
-
-// Delete assistant (admin only)
-router.delete('/assistants/:id', 
-  authenticate,
-  authorize(['admin']),
-  userController.deleteAssistant
-);
-
-// Toggle assistant status (admin only)
-router.put('/assistants/:id/status', 
-  authenticate,
-  authorize(['admin']),
-  userController.toggleAssistantStatus
-);
-
-// Reset assistant password (admin only)
-router.put('/assistants/:id/reset-password', 
-  authenticate,
-  authorize(['admin']),
-  userController.resetPassword
-);
-
-// ===== PROFILE ROUTES (ADMIN & ASSISTANT) =====
-
-// Get own profile (both roles)
+// @route   GET /api/users/profile
+// @desc    Get current user's profile
+// @access  Private (Admin & Assistant)
 router.get('/profile', 
   authenticate,
-  authorize(['admin', 'assistant']),
   userController.getMyProfile
 );
 
-// Update own profile (both roles)
+// @route   PUT /api/users/profile
+// @desc    Update current user's profile
+// @access  Private (Admin & Assistant)
 router.put('/profile', 
   authenticate,
-  authorize(['admin', 'assistant']),
   validator.validateRequest('profile'),
   userController.updateMyProfile
 );
 
-// Change own password (both roles)
+// @route   PUT /api/users/change-password
+// @desc    Change current user's password
+// @access  Private (Admin & Assistant)
 router.put('/change-password', 
   authenticate,
-  authorize(['admin', 'assistant']),
   validator.validateRequest('changePassword'),
   userController.changeMyPassword
 );
 
+// ===== ASSISTANT MANAGEMENT ROUTES (ADMIN ONLY) =====
+
+// @route   GET /api/users/assistants
+// @desc    Get all assistants
+// @access  Private (Admin only)
+router.get('/assistants', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]),
+  userController.getAllAssistants
+);
+
+// @route   POST /api/users/assistants
+// @desc    Create new assistant
+// @access  Private (Admin only)
+router.post('/assistants', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]), 
+  validator.validateRequest('assistant'),
+  userController.createAssistant
+);
+
+// @route   GET /api/users/assistants/:id
+// @desc    Get specific assistant by ID with customer details
+// @access  Private (Admin only)
+router.get('/assistants/:id', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]),
+  userController.getAssistantDetails
+);
+
+// @route   PUT /api/users/assistants/:id
+// @desc    Update assistant details
+// @access  Private (Admin only)
+router.put('/assistants/:id', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]),
+  validator.validateRequest('profile'),
+  userController.updateAssistant
+);
+
+// @route   DELETE /api/users/assistants/:id
+// @desc    Delete assistant (hard delete with customer unassignment)
+// @access  Private (Admin only)
+router.delete('/assistants/:id', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]),
+  userController.deleteAssistant
+);
+
+// @route   PUT /api/users/assistants/:id/status
+// @desc    Toggle assistant active/inactive status
+// @access  Private (Admin only)
+router.put('/assistants/:id/status', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]),
+  userController.toggleAssistantStatus
+);
+
+// @route   PUT /api/users/assistants/:id/reset-password
+// @desc    Reset assistant password and generate new one
+// @access  Private (Admin only)
+router.put('/assistants/:id/reset-password', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]),
+  userController.resetPassword
+);
+
 // ===== CUSTOMER ASSIGNMENT ROUTES (ADMIN ONLY) =====
 
-// Assign customer to assistant (admin only)
+// @route   PUT /api/users/assign-customer
+// @desc    Assign customer to assistant
+//          Body: { customerId: ObjectId, assistantId: ObjectId }
+// @access  Private (Admin only)
 router.put('/assign-customer', 
   authenticate,
-  authorize(['admin']),
+  authorize([USER_ROLES.ADMIN]),
   validator.validateRequest('assignCustomer'),
   userController.assignCustomer
 );
 
-// Unassign customer from assistant (admin only)
+// @route   PUT /api/users/unassign-customer
+// @desc    Unassign customer from assistant
+//          Body: { customerId: ObjectId }
+// @access  Private (Admin only)
 router.put('/unassign-customer', 
   authenticate,
-  authorize(['admin']),
+  authorize([USER_ROLES.ADMIN]),
   validator.validateRequest('unassignCustomer'),
   userController.unassignCustomer
+);
+
+// ===== GENERAL USER MANAGEMENT ROUTES (ADMIN ONLY) =====
+
+// @route   GET /api/users
+// @desc    Get all users (for debugging/management)
+// @access  Private (Admin only)
+router.get('/', 
+  authenticate,
+  authorize([USER_ROLES.ADMIN]),
+  userController.getAllUsers
 );
 
 module.exports = router;
