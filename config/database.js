@@ -9,6 +9,9 @@ const connectDB = async () => {
     console.log('✅ MongoDB Connected Successfully!');
     console.log(`📍 Host: ${conn.connection.host}`);
     console.log(`🗄️  Database: ${conn.connection.name}`);
+    
+    return conn.connection.db; // Return the native MongoDB database object
+    
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);
     process.exit(1);

@@ -108,7 +108,7 @@ customerSchema.virtual('lastName').get(function() {
 });
 
 // ============ INDEXES ============
-customerSchema.index({ email: 1 });
+// Note: email index is automatically created by unique: true
 customerSchema.index({ phone: 1 });
 customerSchema.index({ assignedTo: 1 });
 customerSchema.index({ status: 1 });

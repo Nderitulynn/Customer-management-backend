@@ -139,7 +139,7 @@ orderSchema.virtual('orderAge').get(function() {
   return Math.floor(diffTime / (1000 * 60 * 60 * 24));
 });
 
-// Basic indexes for performance
+// Basic indexes for performance (orderNumber index is automatically created by unique: true)
 orderSchema.index({ customerId: 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ receivedBy: 1 });
@@ -147,7 +147,6 @@ orderSchema.index({ createdBy: 1 });
 orderSchema.index({ creationDate: -1 });
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ createdAt: -1 });
-orderSchema.index({ orderNumber: 1 });
 
 // Compound indexes for common queries
 orderSchema.index({ status: 1, creationDate: -1 });

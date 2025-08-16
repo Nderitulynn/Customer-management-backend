@@ -5,15 +5,15 @@ const messageSchema = new mongoose.Schema({
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Customer',
-    required: [true, 'Customer ID is required'],
-    index: true
+    required: [true, 'Customer ID is required']
+    // Note: index will be created by compound indexes below
   },
   
   assignedTo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User', // Assuming assistants are stored in users collection
-    required: [true, 'Assigned assistant is required'],
-    index: true
+    required: [true, 'Assigned assistant is required']
+    // Note: index will be created by compound indexes below
   },
   
   subject: {
@@ -38,8 +38,8 @@ const messageSchema = new mongoose.Schema({
       values: ['low', 'medium', 'high'],
       message: 'Priority must be one of: low, medium, high'
     },
-    default: 'medium',
-    index: true
+    default: 'medium'
+    // Note: index will be created individually below
   },
   
   status: {
@@ -48,8 +48,8 @@ const messageSchema = new mongoose.Schema({
       values: ['unread', 'read', 'replied', 'closed'],
       message: 'Status must be one of: unread, read, replied, closed'
     },
-    default: 'unread',
-    index: true
+    default: 'unread'
+    // Note: index will be created by compound indexes below
   },
   
   messageType: {
@@ -58,8 +58,7 @@ const messageSchema = new mongoose.Schema({
       values: ['initial', 'reply'],
       message: 'Message type must be one of: initial, reply'
     },
-    default: 'initial',
-    index: true
+    default: 'initial'
   },
   
   readAt: {
@@ -72,14 +71,19 @@ const messageSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes for performance optimization
+// ============ INDEXES ============
+// Individual indexes
+messageSchema.index({ priority: 1 });
+messageSchema.index({ messageType: 1 });
+
+// Compound indexes for performance optimization
 messageSchema.index({ customerId: 1, status: 1 }); // Customer's unread messages
 messageSchema.index({ assignedTo: 1, status: 1 }); // Assistant's unread messages
 messageSchema.index({ customerId: 1, createdAt: -1 }); // Customer's recent messages
 messageSchema.index({ assignedTo: 1, createdAt: -1 }); // Assistant's recent messages
 messageSchema.index({ subject: 'text', content: 'text' }); // Full-text search
 
-// Virtual Fields
+// ============ VIRTUAL FIELDS ============
 messageSchema.virtual('isUnread').get(function() {
   return this.status === 'unread';
 });
@@ -107,7 +111,7 @@ messageSchema.virtual('priorityLevel').get(function() {
   return levels[this.priority] || 2;
 });
 
-// Instance Methods
+// ============ INSTANCE METHODS ============
 messageSchema.methods.markAsRead = function(userId = null) {
   this.status = 'read';
   this.readAt = new Date();
@@ -147,12 +151,12 @@ messageSchema.methods.updatePriority = function(newPriority) {
   return this.save();
 };
 
-// Static Methods for Common Queries
+// ============ STATIC METHODS ============
 messageSchema.statics.findByCustomer = function(customerId, filters = {}) {
   const query = { customerId, ...filters };
   return this.find(query)
     .populate('customerId', 'name email phone')
-    .populate('assistantId', 'username email')
+    .populate('assignedTo', 'username email')
     .sort({ createdAt: -1 });
 };
 
@@ -255,7 +259,7 @@ messageSchema.statics.getRecentActivity = function(userId, role = 'customer', da
     .limit(50);
 };
 
-// Pre-save middleware for data validation and processing
+// ============ PRE-SAVE MIDDLEWARE ============
 messageSchema.pre('save', function(next) {
   // Auto-set readAt when status changes to read
   if (this.isModified('status') && this.status === 'read' && !this.readAt) {
@@ -270,7 +274,7 @@ messageSchema.pre('save', function(next) {
   next();
 });
 
-// Pre-find middleware to always populate references
+// ============ PRE-FIND MIDDLEWARE ============
 messageSchema.pre(/^find/, function(next) {
   // Only populate if not already populated
   if (!this.getPopulatedPaths().includes('customerId')) {

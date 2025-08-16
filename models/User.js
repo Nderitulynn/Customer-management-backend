@@ -107,11 +107,6 @@ userSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`;
 });
 
-// Virtual for full name
-userSchema.virtual('fullName').get(function() {
-  return `${this.firstName} ${this.lastName}`;
-});
-
 // Pre-save middleware to hash password
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
@@ -168,7 +163,7 @@ userSchema.methods.getWithProfile = function() {
   return this.populate('customerProfile');
 };
 
-// Index for role and account status
+// Index for role and account status (email index is automatically created by unique: true)
 userSchema.index({ role: 1, accountStatus: 1 });
 
 // Export the model and USER_ROLES constant
