@@ -59,7 +59,8 @@ const corsOptions = {
       process.env.CLIENT_URL || 'http://localhost:5173',
       'http://localhost:5173',
       'http://localhost:5174',
-      'http://127.0.0.1:5173'
+      'http://127.0.0.1:5173',
+      'https://customer-management-frontend-1f4y.vercel.app' // Add vercel domain
     ];
     
     if (allowedOrigins.includes(origin)) {
