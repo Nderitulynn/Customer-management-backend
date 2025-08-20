@@ -143,7 +143,10 @@ if (process.env.NODE_ENV === 'development') {
   });
 }
 
-// API Routes
+// ============================================================================
+// API ROUTES
+// ============================================================================
+
 // Auth routes with stricter rate limiting
 app.use('/api/auth', authLimiter, authRoutes);
 
@@ -165,9 +168,25 @@ app.use('/api/invoices', authenticate, invoiceRoutes);
 // Protected message routes - Add message routes
 app.use('/api/messages', authenticate, messages);
 
-//Protected dashboard routes
+// Protected dashboard routes
 app.use('/api/admin-dashboard', authenticate, adminRoutes);
 app.use('/api/assistant-dashboard', authenticate, assistantRoutes);
+
+// ============================================================================
+// NEW API ENDPOINTS - Added to match frontend service expectations
+// ============================================================================
+
+// Global stats endpoints (used by dashboard service)
+app.use('/api/stats', authenticate, adminRoutes); // Routes /api/stats to adminRoutes which handles /stats
+
+// Direct orders endpoint (used by dashboard service for recent orders)  
+app.use('/api/orders', authenticate, adminRoutes); // Routes /api/orders to adminRoutes which handles /orders
+
+// Messages endpoints (used by dashboard service)
+app.use('/api/messages/recent', authenticate, adminRoutes); // Routes /api/messages/recent to adminRoutes
+
+// System health endpoint
+app.use('/api/system/health', authenticate, adminRoutes); // Routes /api/system/health to adminRoutes
 
 // Basic route for testing
 app.get('/', (req, res) => {
@@ -183,7 +202,17 @@ app.get('/', (req, res) => {
       orders: '/api/orders (requires authentication)',
       customerOrders: '/api/customer-orders (requires authentication)',
       invoices: '/api/invoices (requires authentication)',
-      messages: '/api/messages (requires authentication)' // Add messages endpoint info
+      messages: '/api/messages (requires authentication)',
+      // NEW ENDPOINTS
+      stats: '/api/stats (requires authentication) - Dashboard statistics',
+      statsCustomers: '/api/stats/customers (requires authentication) - Customer analytics',
+      statsUsers: '/api/stats/users (requires authentication) - User analytics',
+      messagesRecent: '/api/messages/recent (requires authentication) - Recent messages',
+      systemHealth: '/api/system/health (requires authentication) - System health metrics'
+    },
+    dashboards: {
+      admin: '/api/admin-dashboard (requires admin authentication)',
+      assistant: '/api/assistant-dashboard (requires assistant authentication)'
     },
     environment: process.env.NODE_ENV || 'development',
     security: {
@@ -268,6 +297,13 @@ const startServer = async () => {
       console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔒 JWT Authentication: ${process.env.JWT_SECRET ? 'Configured' : 'NOT CONFIGURED!'}`);
       console.log(`🌐 CORS Origin: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+      console.log(`📈 New API Endpoints Available:`);
+      console.log(`   - /api/stats - Dashboard statistics`);
+      console.log(`   - /api/stats/customers - Customer analytics`);
+      console.log(`   - /api/stats/users - User analytics`);
+      console.log(`   - /api/orders - Order data for dashboard`);
+      console.log(`   - /api/messages/recent - Recent messages`);
+      console.log(`   - /api/system/health - System health metrics`);
     });
     
   } catch (error) {
