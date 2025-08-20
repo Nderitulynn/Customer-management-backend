@@ -29,94 +29,80 @@ router.get('/stats', requireAdmin(), async (req, res) => {
   }
 });
 
-// GET /api/admin-dashboard/customers - Customer list management
-router.get('/customers', requireAdmin(), async (req, res) => {
-  try {
-    const Customer = require('../models/Customer');
-    const { page = 1, limit = 20, search, status } = req.query;
-    
-    const query = {};
-    
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } }
-      ];
-    }
-    
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-    
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    const [customers, totalCount] = await Promise.all([
-      Customer.find(query)
-        .populate('assignedTo', 'name email')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .select('name email phone status createdAt assignedTo'),
-      Customer.countDocuments(query)
-    ]);
-    
-    res.json({
-      customers,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalCount / parseInt(limit)),
-        totalItems: totalCount
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      error: 'Failed to fetch customers',
-      details: error.message 
-    });
-  }
-});
 
-// GET /api/admin-dashboard/orders - Order list management
-router.get('/orders', requireAdmin(), async (req, res) => {
+
+// GET /api/admin-dashboard/stats/orders - Order statistics
+router.get('/stats/orders', requireAdmin(), async (req, res) => {
   try {
     const Order = require('../models/Order');
-    const { page = 1, limit = 20, status, search } = req.query;
     
-    const query = {};
+    // Get total order count
+    const total = await Order.countDocuments();
     
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-    
-    if (search) {
-      query.orderNumber = { $regex: search, $options: 'i' };
-    }
-    
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    const [orders, totalCount] = await Promise.all([
-      Order.find(query)
-        .populate('customer', 'name email')
-        .populate('assignedTo', 'name')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .select('orderNumber status totalAmount createdAt customer assignedTo'),
-      Order.countDocuments(query)
+    // Get status distribution
+    const statusDistribution = await Order.aggregate([
+      { $group: { _id: "$status", count: { $sum: 1 } } }
     ]);
     
+    // Get payment status distribution
+    const paymentStatusDistribution = await Order.aggregate([
+      { $group: { _id: "$paymentStatus", count: { $sum: 1 } } }
+    ]);
+    
+    // Get total revenue
+    const revenueStats = await Order.aggregate([
+      { $group: { _id: null, totalRevenue: { $sum: "$orderTotal" } } }
+    ]);
+    
+    // Get order growth (last 12 months)
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+    
+    const monthlyGrowth = await Order.aggregate([
+      { $match: { createdAt: { $gte: twelveMonthsAgo } } },
+      { 
+        $group: {
+          _id: { 
+            year: { $year: "$createdAt" },
+            month: { $month: "$createdAt" }
+          },
+          count: { $sum: 1 },
+          revenue: { $sum: "$orderTotal" }
+        }
+      },
+      { $sort: { "_id.year": 1, "_id.month": 1 } }
+    ]);
+    
+    // Get recent orders (last 10) - basic info only
+    const recentOrders = await Order.find()
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('orderNumber status orderTotal createdAt paymentStatus')
+      .populate('customerId', 'fullName')
+      .populate('createdBy', 'fullName');
+    
     res.json({
-      orders,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalCount / parseInt(limit)),
-        totalItems: totalCount
+      success: true,
+      data: {
+        total,
+        statusDistribution: statusDistribution.reduce((acc, item) => {
+          acc[item._id || 'unknown'] = item.count;
+          return acc;
+        }, {}),
+        paymentStatusDistribution: paymentStatusDistribution.reduce((acc, item) => {
+          acc[item._id || 'unknown'] = item.count;
+          return acc;
+        }, {}),
+        totalRevenue: revenueStats.length > 0 ? revenueStats[0].totalRevenue : 0,
+        monthlyGrowth,
+        recentOrders,
+        timestamp: new Date().toISOString()
       }
     });
   } catch (error) {
     res.status(500).json({ 
-      error: 'Failed to fetch orders',
+      success: false,
+      error: 'Failed to fetch order statistics',
       details: error.message 
     });
   }
@@ -133,7 +119,7 @@ router.get('/assistants', requireAdmin(), async (req, res) => {
     
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
+        { fullName: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } }
       ];
     }
@@ -145,7 +131,7 @@ router.get('/assistants', requireAdmin(), async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
-        .select('name email isActive createdAt lastLogin'),
+        .select('fullName email isActive createdAt lastLogin'),
       User.countDocuments(query)
     ]);
     
@@ -199,65 +185,7 @@ router.post('/assistants', requireAdmin(), async (req, res) => {
   }
 });
 
-// ============================================================================
-// CRITICAL MISSING ENDPOINTS - Added to fix 404/500 errors
-// ============================================================================
-
-// GET /api/stats - Comprehensive dashboard statistics (matches API_ENDPOINTS.STATS.DASHBOARD)
-router.get('/stats', requireAdmin(), async (req, res) => {
-  try {
-    const Customer = require('../models/Customer');
-    const Order = require('../models/Order');
-    const User = require('../models/User');
-    
-    // Get basic counts
-    const [customerCount, orderCount, assistantCount] = await Promise.all([
-      Customer.countDocuments(),
-      Order.countDocuments(),
-      User.countDocuments({ role: 'assistant' })
-    ]);
-    
-    // Get recent activity counts (last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    const [recentCustomers, recentOrders] = await Promise.all([
-      Customer.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
-      Order.countDocuments({ createdAt: { $gte: thirtyDaysAgo } })
-    ]);
-    
-    // Calculate basic revenue (if orders have totalAmount field)
-    const revenueResult = await Order.aggregate([
-      { $group: { _id: null, total: { $sum: "$totalAmount" } } }
-    ]);
-    const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;
-    
-    res.json({
-      success: true,
-      data: {
-        totals: {
-          customers: customerCount,
-          orders: orderCount,
-          assistants: assistantCount,
-          revenue: totalRevenue
-        },
-        recent: {
-          customers: recentCustomers,
-          orders: recentOrders
-        },
-        timestamp: new Date().toISOString()
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch dashboard statistics',
-      details: error.message 
-    });
-  }
-});
-
-// GET /api/stats/customers - Customer statistics (matches API_ENDPOINTS.STATS.CUSTOMERS)
+// GET /api/admin-dashboard/stats/customers - Customer statistics (matches API_ENDPOINTS.STATS.CUSTOMERS)
 router.get('/stats/customers', requireAdmin(), async (req, res) => {
   try {
     const Customer = require('../models/Customer');
@@ -292,8 +220,8 @@ router.get('/stats/customers', requireAdmin(), async (req, res) => {
     const recentCustomers = await Customer.find()
       .sort({ createdAt: -1 })
       .limit(10)
-      .select('name email status createdAt')
-      .populate('assignedTo', 'name');
+      .select('fullName email status createdAt')
+      .populate('assignedTo', 'fullName');
     
     res.json({
       success: true,
@@ -317,7 +245,7 @@ router.get('/stats/customers', requireAdmin(), async (req, res) => {
   }
 });
 
-// GET /api/stats/users - User statistics (matches API_ENDPOINTS.STATS.USERS)
+// GET /api/admin-dashboard/stats/users - User statistics (matches API_ENDPOINTS.STATS.USERS)
 router.get('/stats/users', requireAdmin(), async (req, res) => {
   try {
     const User = require('../models/User');
@@ -330,7 +258,7 @@ router.get('/stats/users', requireAdmin(), async (req, res) => {
     
     // Get assistant performance stats
     const assistants = await User.find({ role: 'assistant' })
-      .select('name email isActive lastLogin');
+      .select('fullName email isActive lastLogin');
     
     const assistantStats = await Promise.all(
       assistants.map(async (assistant) => {
@@ -339,7 +267,7 @@ router.get('/stats/users', requireAdmin(), async (req, res) => {
         });
         return {
           id: assistant._id,
-          name: assistant.name,
+          name: assistant.fullName,
           email: assistant.email,
           isActive: assistant.isActive,
           lastLogin: assistant.lastLogin,
@@ -369,57 +297,8 @@ router.get('/stats/users', requireAdmin(), async (req, res) => {
   }
 });
 
-// GET /api/orders - Order data for dashboard (matches API_ENDPOINTS.ORDERS.LIST)
-router.get('/orders', requireAdmin(), async (req, res) => {
-  try {
-    const Order = require('../models/Order');
-    const { limit = 10, recent = 'true' } = req.query;
-    
-    let query = {};
-    let sort = { createdAt: -1 };
-    
-    // If requesting recent orders, get last 30 days
-    if (recent === 'true') {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      query.createdAt = { $gte: thirtyDaysAgo };
-    }
-    
-    const orders = await Order.find(query)
-      .populate('customer', 'name email')
-      .populate('assignedTo', 'name')
-      .sort(sort)
-      .limit(parseInt(limit))
-      .select('orderNumber status totalAmount createdAt customer assignedTo');
-    
-    // Get order statistics
-    const orderStats = await Order.aggregate([
-      { $group: { _id: "$status", count: { $sum: 1 } } }
-    ]);
-    
-    res.json({
-      success: true,
-      data: {
-        orders,
-        statistics: orderStats.reduce((acc, item) => {
-          acc[item._id || 'unknown'] = item.count;
-          return acc;
-        }, {}),
-        total: await Order.countDocuments(),
-        timestamp: new Date().toISOString()
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch orders',
-      details: error.message 
-    });
-  }
-});
-
-// GET /api/messages/recent - Recent messages for dashboard (matches API_ENDPOINTS.MESSAGES.RECENT)
-router.get('/messages/recent', requireAdmin(), async (req, res) => {
+// GET /api/messages/recent - Recent messages for dashboard (FIXED ROUTE PATH)
+router.get('/recent', requireAdmin(), async (req, res) => {
   try {
     const Message = require('../models/Message');
     const { limit = 10 } = req.query;
@@ -430,8 +309,8 @@ router.get('/messages/recent', requireAdmin(), async (req, res) => {
     
     try {
       recentMessages = await Message.find()
-        .populate('customer', 'name email')
-        .populate('user', 'name email')
+        .populate('customer', 'fullName email')
+        .populate('user', 'fullName email')
         .sort({ createdAt: -1 })
         .limit(parseInt(limit))
         .select('content type status createdAt customer user');
@@ -459,8 +338,8 @@ router.get('/messages/recent', requireAdmin(), async (req, res) => {
   }
 });
 
-// GET /api/system/health - System health metrics
-router.get('/system/health', requireAdmin(), async (req, res) => {
+// GET /api/health - System health metrics (FIXED ROUTE PATH)
+router.get('/', requireAdmin(), async (req, res) => {
   try {
     const mongoose = require('mongoose');
     
