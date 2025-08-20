@@ -156,16 +156,16 @@ app.use('/api/customers', authenticate, customerRoutes);
 // Protected user routes
 app.use('/api/users', userRoutes);
 
-// Protected order routes - Added orders router
+// Protected order routes
 app.use('/api/orders', authenticate, orderRoutes);
 
-// Protected customer-orders routes - Add this line
+// Protected customer-orders routes
 app.use('/api/customer-orders', authenticate, customerOrderRoutes);
 
 // Protected invoice routes
 app.use('/api/invoices', authenticate, invoiceRoutes);
 
-// Protected message routes - Add message routes
+// Protected message routes - Standard message routes
 app.use('/api/messages', authenticate, messages);
 
 // Protected dashboard routes
@@ -173,20 +173,14 @@ app.use('/api/admin-dashboard', authenticate, adminRoutes);
 app.use('/api/assistant-dashboard', authenticate, assistantRoutes);
 
 // ============================================================================
-// NEW API ENDPOINTS - Added to match frontend service expectations
+// FIXED API ENDPOINTS - Corrected routing to avoid conflicts
 // ============================================================================
 
-// Global stats endpoints (used by dashboard service)
-app.use('/api/stats', authenticate, adminRoutes); // Routes /api/stats to adminRoutes which handles /stats
+// Messages endpoints - FIXED: Mount to /api/messages for recent messages
+app.use('/api/messages', authenticate, adminRoutes);
 
-// Direct orders endpoint (used by dashboard service for recent orders)  
-app.use('/api/orders', authenticate, adminRoutes); // Routes /api/orders to adminRoutes which handles /orders
-
-// Messages endpoints (used by dashboard service)
-app.use('/api/messages/recent', authenticate, adminRoutes); // Routes /api/messages/recent to adminRoutes
-
-// System health endpoint
-app.use('/api/system/health', authenticate, adminRoutes); // Routes /api/system/health to adminRoutes
+// System health endpoint - FIXED: Mount to /api/health
+app.use('/api/health', authenticate, adminRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {
@@ -203,12 +197,11 @@ app.get('/', (req, res) => {
       customerOrders: '/api/customer-orders (requires authentication)',
       invoices: '/api/invoices (requires authentication)',
       messages: '/api/messages (requires authentication)',
-      // NEW ENDPOINTS
-      stats: '/api/stats (requires authentication) - Dashboard statistics',
-      statsCustomers: '/api/stats/customers (requires authentication) - Customer analytics',
-      statsUsers: '/api/stats/users (requires authentication) - User analytics',
+      // UPDATED ENDPOINTS
+      statsCustomers: '/api/admin-dashboard/stats/customers (requires admin authentication) - Customer analytics',
+      statsUsers: '/api/admin-dashboard/stats/users (requires admin authentication) - User analytics',
       messagesRecent: '/api/messages/recent (requires authentication) - Recent messages',
-      systemHealth: '/api/system/health (requires authentication) - System health metrics'
+      systemHealth: '/api/health (requires authentication) - System health metrics'
     },
     dashboards: {
       admin: '/api/admin-dashboard (requires admin authentication)',
@@ -297,13 +290,11 @@ const startServer = async () => {
       console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔒 JWT Authentication: ${process.env.JWT_SECRET ? 'Configured' : 'NOT CONFIGURED!'}`);
       console.log(`🌐 CORS Origin: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
-      console.log(`📈 New API Endpoints Available:`);
-      console.log(`   - /api/stats - Dashboard statistics`);
-      console.log(`   - /api/stats/customers - Customer analytics`);
-      console.log(`   - /api/stats/users - User analytics`);
-      console.log(`   - /api/orders - Order data for dashboard`);
+      console.log(`📈 Fixed API Endpoints Available:`);
+      console.log(`   - /api/admin-dashboard/stats/customers - Customer analytics`);
+      console.log(`   - /api/admin-dashboard/stats/users - User analytics`);
       console.log(`   - /api/messages/recent - Recent messages`);
-      console.log(`   - /api/system/health - System health metrics`);
+      console.log(`   - /api/health - System health metrics`);
     });
     
   } catch (error) {
