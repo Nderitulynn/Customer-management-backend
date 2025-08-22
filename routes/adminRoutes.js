@@ -3,20 +3,21 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 
 // GET /api/admin-dashboard/stats - Simple system overview
-router.get('/stats', requireAdmin(), async (req, res) => {
+router.get('/stats', ...requireAdmin(), async (req, res) => {
   try {
-    const Customer = require('../models/Customer');
+    const customerService = require('../services/customerService');
     const Order = require('../models/Order');
     const User = require('../models/User');
     
-    const [customerCount, orderCount, assistantCount] = await Promise.all([
-      Customer.countDocuments(),
+    // Use customerService for consistent role-based counting
+    const customerStats = await customerService.getDashboardStats(req.user);
+    const [orderCount, assistantCount] = await Promise.all([
       Order.countDocuments(),
       User.countDocuments({ role: 'assistant' })
     ]);
     
     res.json({
-      customerCount,
+      customerCount: customerStats.totalCustomers, 
       orderCount,
       assistantCount,
       timestamp: new Date().toISOString()
