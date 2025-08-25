@@ -26,7 +26,7 @@ const validateObjectId = (req, res, next) => {
 // @route   GET /api/orders/stats
 // @desc    Get order statistics for dashboard
 // @access  Private (All authenticated users)
-router.get('/stats', orderController.getDashboardStats);
+router.get('/stats', authenticate, orderController.getDashboardStats);
 
 // @route   GET /api/orders/activity
 // @desc    Get recent order activity (for admin dashboard)
