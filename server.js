@@ -60,7 +60,7 @@ const corsOptions = {
       'http://localhost:5173',
       'http://localhost:5174',
       'http://127.0.0.1:5173',
-      'https://customer-management-frontend-1f4y.vercel.app' // Add vercel domain
+      'https://customer-management-frontend-mu.vercel.app' // Vercel domain
     ];
     
     if (allowedOrigins.includes(origin)) {
@@ -143,9 +143,7 @@ if (process.env.NODE_ENV === 'development') {
   });
 }
 
-// ============================================================================
 // API ROUTES
-// ============================================================================
 
 // Auth routes with stricter rate limiting
 app.use('/api/auth', authLimiter, authRoutes);
@@ -171,10 +169,6 @@ app.use('/api/messages', authenticate, messages);
 // Protected dashboard routes
 app.use('/api/admin-dashboard', authenticate, adminRoutes);
 app.use('/api/assistant-dashboard', authenticate, assistantRoutes);
-
-// ============================================================================
-// FIXED API ENDPOINTS - Corrected routing to avoid conflicts
-// ============================================================================
 
 // Messages endpoints - FIXED: Mount to /api/messages for recent messages
 app.use('/api/messages', authenticate, adminRoutes);
