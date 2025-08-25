@@ -155,7 +155,7 @@ app.use('/api/customers', authenticate, customerRoutes);
 app.use('/api/users', userRoutes);
 
 // Protected order routes
-app.use('/api/orders', authenticate, orderRoutes);
+app.use('/api/orders', orderRoutes);
 
 // Protected customer-orders routes
 app.use('/api/customer-orders', authenticate, customerOrderRoutes);
@@ -191,7 +191,6 @@ app.get('/', (req, res) => {
       customerOrders: '/api/customer-orders (requires authentication)',
       invoices: '/api/invoices (requires authentication)',
       messages: '/api/messages (requires authentication)',
-      // UPDATED ENDPOINTS
       statsCustomers: '/api/admin-dashboard/stats/customers (requires admin authentication) - Customer analytics',
       statsUsers: '/api/admin-dashboard/stats/users (requires admin authentication) - User analytics',
       messagesRecent: '/api/messages/recent (requires authentication) - Recent messages',
