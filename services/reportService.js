@@ -1,9 +1,30 @@
 const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
-const Assistant = require('../models/Assistant');
+const Assistant = require('../models/User');
 const { aggregateByPeriod, calculateGrowthRate, formatCurrency } = require('../utils/reportHelpers');
-const { REPORT_TYPES, ORDER_STATUS, ASSISTANT_STATUS } = require('../constants/reportTypes');
+
+// Define constants locally
+const ORDER_STATUS = {
+  PENDING: 'pending',
+  PROCESSING: 'processing',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled'
+};
+
+const ASSISTANT_STATUS = {
+  ACTIVE: 'active',
+  INACTIVE: 'inactive'
+};
+
+const REPORT_TYPES = {
+  TRENDS: {
+    REVENUE: 'revenue',
+    CUSTOMERS: 'customers',
+    ORDERS: 'orders',
+    ASSISTANTS: 'assistants'
+  }
+};
 
 class ReportService {
   /**
