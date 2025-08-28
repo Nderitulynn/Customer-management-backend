@@ -161,7 +161,9 @@ class CustomerService {
       const [
         totalCustomers,
         assignedCustomers,
-        unassignedCustomers
+        unassignedCustomers,
+        activeCustomers,
+        inactiveCustomers
       ] = await Promise.all([
         Customer.countDocuments(baseQuery),
         user.role === USER_ROLES.ADMIN ? 
@@ -169,15 +171,17 @@ class CustomerService {
           Customer.countDocuments(baseQuery),
         user.role === USER_ROLES.ADMIN ? 
           Customer.countDocuments({ assignedTo: null }) : 
-          0
+          0,
+        Customer.countDocuments({ ...baseQuery, isActive: true }),
+        Customer.countDocuments({ ...baseQuery, isActive: false })
       ]);
       
       return {
         totalCustomers,
         assignedCustomers,
         unassignedCustomers,
-        activeCustomers: totalCustomers, // Assuming all are active for now
-        inactiveCustomers: 0,
+        activeCustomers,
+        inactiveCustomers,
         newCustomersThisWeek: 0, // Would need date filtering
         customerGrowthPercentage: 0,
         customerSatisfaction: 0,
@@ -462,7 +466,7 @@ class CustomerService {
       
       let baseQuery = { customerId: customerProfileId };
       
-      // Filter by status if provided
+      // Filter by status if provided (this is order status, not customer status)
       if (status) {
         baseQuery.status = status;
       }

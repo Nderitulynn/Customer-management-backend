@@ -58,13 +58,6 @@ const customerSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
-  
-  // Customer Status (separate from authentication)
-  status: {
-    type: String,
-    enum: ['active', 'inactive', 'pending'],
-    default: 'active'
-  },
 
   // Customer access permissions
   hasAccess: {
@@ -111,7 +104,6 @@ customerSchema.virtual('lastName').get(function() {
 // Note: email index is automatically created by unique: true
 customerSchema.index({ phone: 1 });
 customerSchema.index({ assignedTo: 1 });
-customerSchema.index({ status: 1 });
 customerSchema.index({ fullName: 1 });
 
 // ============ METHODS ============
@@ -126,7 +118,6 @@ customerSchema.methods.getProfileData = async function() {
     phone: this.phone,
     address: this.address,
     notes: this.notes,
-    status: this.status,
     hasAccess: this.hasAccess,
     isActive: this.isActive,
     assignedTo: this.assignedTo,
@@ -137,7 +128,7 @@ customerSchema.methods.getProfileData = async function() {
 
 // Update customer profile
 customerSchema.methods.updateProfile = function(updateData) {
-  const allowedUpdates = ['fullName', 'email', 'phone', 'address', 'notes', 'status', 'assignedTo', 'hasAccess', 'isActive'];
+  const allowedUpdates = ['fullName', 'email', 'phone', 'address', 'notes', 'assignedTo', 'hasAccess', 'isActive'];
   
   allowedUpdates.forEach(field => {
     if (updateData[field] !== undefined) {
@@ -175,11 +166,6 @@ customerSchema.statics.findByEmail = function(email) {
   return this.findOne({ email: email.toLowerCase() });
 };
 
-// Find customers by status
-customerSchema.statics.findByStatus = function(status) {
-  return this.find({ status });
-};
-
 // Find customers assigned to a user
 customerSchema.statics.findByAssignedUser = function(userId) {
   return this.find({ assignedTo: userId });
@@ -187,7 +173,7 @@ customerSchema.statics.findByAssignedUser = function(userId) {
 
 // Find active customers
 customerSchema.statics.findActive = function() {
-  return this.find({ isActive: true, status: 'active' });
+  return this.find({ isActive: true });
 };
 
 module.exports = mongoose.model('Customer', customerSchema);
