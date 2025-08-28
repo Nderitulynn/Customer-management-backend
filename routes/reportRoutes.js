@@ -1,8 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const reportController = require('../controllers/reportController');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const { validateReportParams, validateExportParams } = require('../validators/reportValidators');
+const ReportController = require('../controllers/reportController');
+const { authenticate } = require('../middleware/auth');
 const rateLimit = require('express-rate-limit');
 
 // Rate limiting for export operations (more restrictive)
@@ -37,24 +36,8 @@ const reportLimiter = rateLimit({
  */
 router.get('/dashboard', 
   reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.getDashboardReports
-);
-
-/**
- * @route   GET /api/reports/summary
- * @desc    Get summary statistics and KPIs
- * @access  Admin only
- * @params  startDate, endDate, period, timezone
- */
-router.get('/summary', 
-  reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.getSummaryStats
+  authenticate, 
+  ReportController.getDashboardReports
 );
 
 /**
@@ -65,10 +48,8 @@ router.get('/summary',
  */
 router.get('/revenue', 
   reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.getRevenueReports
+  authenticate, 
+  ReportController.getRevenueReports
 );
 
 /**
@@ -79,10 +60,8 @@ router.get('/revenue',
  */
 router.get('/performance', 
   reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.getPerformanceReports
+  authenticate, 
+  ReportController.getPerformanceReports
 );
 
 /**
@@ -93,10 +72,8 @@ router.get('/performance',
  */
 router.get('/activity', 
   reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.getActivityReports
+  authenticate, 
+  ReportController.getActivityReports
 );
 
 /**
@@ -107,10 +84,8 @@ router.get('/activity',
  */
 router.get('/trends/:type', 
   reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.getTrendData
+  authenticate, 
+  ReportController.getTrendData
 );
 
 /**
@@ -121,10 +96,8 @@ router.get('/trends/:type',
  */
 router.get('/metrics', 
   reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.getBusinessMetrics
+  authenticate, 
+  ReportController.getBusinessMetrics
 );
 
 /**
@@ -135,10 +108,8 @@ router.get('/metrics',
  */
 router.post('/export', 
   exportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateExportParams,
-  reportController.exportReport
+  authenticate, 
+  ReportController.exportReport
 );
 
 /**
@@ -149,10 +120,8 @@ router.post('/export',
  */
 router.post('/custom', 
   reportLimiter,
-  authenticateToken, 
-  requireAdmin, 
-  validateReportParams,
-  reportController.generateCustomReport
+  authenticate, 
+  ReportController.generateCustomReport
 );
 
 /**
@@ -161,56 +130,8 @@ router.post('/custom',
  * @access  Admin only
  */
 router.get('/filters', 
-  authenticateToken, 
-  requireAdmin, 
-  reportController.getFilterOptions
-);
-
-/**
- * @route   GET /api/reports/status/:exportId
- * @desc    Check status of long-running export operations
- * @access  Admin only
- * @params  exportId
- */
-router.get('/status/:exportId', 
-  authenticateToken, 
-  requireAdmin, 
-  reportController.getExportStatus
-);
-
-/**
- * @route   GET /api/reports/download/:exportId
- * @desc    Download completed export file
- * @access  Admin only
- * @params  exportId
- */
-router.get('/download/:exportId', 
-  authenticateToken, 
-  requireAdmin, 
-  reportController.downloadExport
-);
-
-/**
- * @route   DELETE /api/reports/export/:exportId
- * @desc    Delete export file and cleanup
- * @access  Admin only
- * @params  exportId
- */
-router.delete('/export/:exportId', 
-  authenticateToken, 
-  requireAdmin, 
-  reportController.deleteExport
-);
-
-/**
- * @route   GET /api/reports/cache/clear
- * @desc    Clear report cache (for debugging/maintenance)
- * @access  Admin only
- */
-router.get('/cache/clear', 
-  authenticateToken, 
-  requireAdmin, 
-  reportController.clearReportCache
+  authenticate, 
+  ReportController.getFilterOptions
 );
 
 /**
@@ -219,9 +140,8 @@ router.get('/cache/clear',
  * @access  Admin only
  */
 router.get('/health', 
-  authenticateToken, 
-  requireAdmin, 
-  reportController.getReportSystemHealth
+  authenticate, 
+  ReportController.getReportSystemHealth
 );
 
 // Error handling middleware specific to reports
