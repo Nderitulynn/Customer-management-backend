@@ -438,84 +438,6 @@ const changeMyPassword = async (req, res) => {
   }
 };
 
-// ===== CUSTOMER ASSIGNMENT =====
-const assignCustomer = async (req, res) => {
-  try {
-    const { customerId, assistantId } = req.body;
-
-    // Validate assistant exists and is active
-    const assistant = await User.findById(assistantId);
-    if (!assistant || assistant.role !== 'assistant') {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Assistant not found' 
-      });
-    }
-    
-    if (!assistant.isActive) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot assign customer to inactive assistant' 
-      });
-    }
-
-    // Update customer assignment
-    const customer = await Customer.findByIdAndUpdate(
-      customerId,
-      { assignedTo: assistantId },
-      { new: true }
-    );
-
-    if (!customer) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Customer not found' 
-      });
-    }
-
-    res.json({ 
-      success: true, 
-      message: 'Customer assigned successfully',
-      data: customer
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-};
-
-const unassignCustomer = async (req, res) => {
-  try {
-    const { customerId } = req.body;
-
-    const customer = await Customer.findByIdAndUpdate(
-      customerId,
-      { $unset: { assignedTo: 1 } },
-      { new: true }
-    );
-
-    if (!customer) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Customer not found' 
-      });
-    }
-
-    res.json({ 
-      success: true, 
-      message: 'Customer unassigned successfully',
-      data: customer
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-};
-
 // ===== EXPORTS =====
 module.exports = {
   registerAdmin,
@@ -529,7 +451,5 @@ module.exports = {
   resetPassword,
   getMyProfile,
   updateMyProfile,
-  changeMyPassword,
-  assignCustomer,
-  unassignCustomer
+  changeMyPassword
 };
