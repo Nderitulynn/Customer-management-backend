@@ -1,6 +1,8 @@
+//admin dashboard
 const express = require('express');
 const router = express.Router();
-const { requireAdmin } = require('../middleware/auth');
+// Updated import - get requireAdmin from auth routes
+const { requireAdmin } = require('./auth');
 
 // GET /api/admin-dashboard/stats - Simple system overview
 router.get('/stats', ...requireAdmin(), async (req, res) => {
@@ -16,12 +18,14 @@ router.get('/stats', ...requireAdmin(), async (req, res) => {
       User.countDocuments({ role: 'assistant' })
     ]);
     
-    res.json({
-      customerCount: customerStats.totalCustomers, 
-      orderCount,
-      assistantCount,
-      timestamp: new Date().toISOString()
-    });
+  res.json({
+  stats: {
+    totalCustomers: customerStats.totalCustomers,
+    totalOrders: orderCount,
+    totalAssistants: assistantCount
+  },
+  timestamp: new Date().toISOString()
+});
   } catch (error) {
     res.status(500).json({ 
       error: 'Failed to fetch stats',
@@ -30,12 +34,12 @@ router.get('/stats', ...requireAdmin(), async (req, res) => {
   }
 });
 
-
-
 // GET /api/admin-dashboard/stats/orders - Order statistics
-router.get('/stats/orders', requireAdmin(), async (req, res) => {
+router.get('/stats/orders', ...requireAdmin(), async (req, res) => {
   try {
+     const OrderService = require('../services/orderService');
     const Order = require('../models/Order');
+
     
     // Get total order count
     const total = await Order.countDocuments();
@@ -110,8 +114,10 @@ router.get('/stats/orders', requireAdmin(), async (req, res) => {
 });
 
 // GET /api/admin-dashboard/assistants - Assistant management
-router.get('/assistants', requireAdmin(), async (req, res) => {
+router.get('/assistants', ...requireAdmin(), async (req, res) => {
   try {
+    //add assistantservice 
+     const customerService = require('../services/customerService');
     const User = require('../models/User');
     const Customer = require('../models/Customer');
     const { page = 1, limit = 20, search } = req.query;
@@ -166,7 +172,7 @@ router.get('/assistants', requireAdmin(), async (req, res) => {
 });
 
 // POST /api/admin-dashboard/assistants - Create new assistant
-router.post('/assistants', requireAdmin(), async (req, res) => {
+router.post('/assistants', ...requireAdmin(), async (req, res) => {
   try {
     const userController = require('../controllers/userController');
     const ValidationMiddleware = require('../middleware/validation');
@@ -187,7 +193,7 @@ router.post('/assistants', requireAdmin(), async (req, res) => {
 });
 
 // GET /api/admin-dashboard/stats/customers - Customer statistics (matches API_ENDPOINTS.STATS.CUSTOMERS)
-router.get('/stats/customers', requireAdmin(), async (req, res) => {
+router.get('/stats/customers', ...requireAdmin(), async (req, res) => {
   try {
     const Customer = require('../models/Customer');
     
@@ -247,7 +253,7 @@ router.get('/stats/customers', requireAdmin(), async (req, res) => {
 });
 
 // GET /api/admin-dashboard/stats/users - User statistics (matches API_ENDPOINTS.STATS.USERS)
-router.get('/stats/users', requireAdmin(), async (req, res) => {
+router.get('/stats/users', ...requireAdmin(), async (req, res) => {
   try {
     const User = require('../models/User');
     const Customer = require('../models/Customer');
@@ -299,7 +305,7 @@ router.get('/stats/users', requireAdmin(), async (req, res) => {
 });
 
 // GET /api/messages/recent - Recent messages for dashboard (FIXED ROUTE PATH)
-router.get('/recent', requireAdmin(), async (req, res) => {
+router.get('/recent', ...requireAdmin(), async (req, res) => {
   try {
     const Message = require('../models/Message');
     const { limit = 10 } = req.query;
@@ -340,7 +346,7 @@ router.get('/recent', requireAdmin(), async (req, res) => {
 });
 
 // GET /api/health - System health metrics (FIXED ROUTE PATH)
-router.get('/', requireAdmin(), async (req, res) => {
+router.get('/', ...requireAdmin(), async (req, res) => {
   try {
     const mongoose = require('mongoose');
     
@@ -414,7 +420,7 @@ router.use((error, req, res, next) => {
       details: error.message
     });
   }
-  
+
   res.status(500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
